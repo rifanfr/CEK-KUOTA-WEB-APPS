@@ -1,0 +1,24 @@
+{
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/k/:id*",
+      "destination": "/kuota?id=:id"
+    },
+    {
+      "source": "/K/:id*",
+      "destination": "/kuota?id=:id"
+    },
+    {
+      "source": "/c/:id*",
+      "destination": "/kuota?id=:id"
+    }
+  ],
+  "redirects": [
+    {
+      "source": "/kasir",
+      "destination": "/",
+      "permanent": false
+    }
+  ]
+}

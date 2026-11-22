@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Kartu Cek Kuota Mandiri Pelanggan</title>
+  <meta name="description" content="Informasi Pengecekan Mandiri Kuota Beras & Gas Pelanggan">
+  <meta property="og:title" content="Kartu Cek Kuota Mandiri Pelanggan">
+  <meta property="og:description" content="Informasi Pengecekan Mandiri Kuota Beras & Gas Pelanggan">
+  <meta property="og:type" content="website">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .animate-fade-in {
+      animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-950 min-h-screen text-slate-800 font-sans flex items-center justify-center p-4 antialiased selection:bg-emerald-500 selection:text-white">
+
+  <!-- CONTAINER UTAMA KARTU KUOTA PELANGGAN -->
+  <div class="max-w-md w-full bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden relative my-auto p-5 sm:p-6 space-y-4 animate-fade-in">
+
+    <!-- Tombol Tutup Pop-Up Kiosk (X) -->
+    <button
+      type="button"
+      onclick="handleClosePage()"
+      class="absolute top-4 right-4 p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition z-10"
+      title="Tutup Tampilan Kuota"
+    >
+      <i data-lucide="x" class="w-5 h-5"></i>
+    </button>
+
+    <!-- STATE 1: LOADING SKELETON -->
+    <div id="view-loading" class="py-10 text-center space-y-4">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 animate-spin">
+        <i data-lucide="loader-2" class="w-6 h-6"></i>
+      </div>
+      <div>
+        <h3 class="text-sm font-bold text-slate-900">Memuat Data Kuota Pelanggan...</h3>
+        <p class="text-xs text-slate-500 mt-1">Menghubungkan ke sistem kuota</p>
+      </div>
+    </div>
+
+    <!-- STATE 2: NOT FOUND / ERROR -->
+    <div id="view-error" class="hidden py-8 text-center space-y-3">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-rose-100 text-rose-600">
+        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+      </div>
+      <h3 id="error-title" class="text-base font-bold text-slate-900">Data Pelanggan Tidak Ditemukan</h3>
+      <p id="error-message" class="text-xs text-slate-500 leading-relaxed px-4">
+        QR Code atau ID tidak terdaftar dalam basis data pelanggan. Silakan hubungi petugas gerai terdekat.
+      </p>
+      <div class="mt-2 flex items-center justify-center gap-2">
+        <a
+          href="/"
+          class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 text-white font-semibold text-xs hover:bg-slate-800 transition"
+        >
+          <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+          <span>Kembali ke Pencarian</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- STATE 3: EXIT / TERIMA KASIH (Jika browser menolak window.close) -->
+    <div id="view-exit" class="hidden py-10 text-center space-y-3">
+      <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700">
+        <i data-lucide="check-circle" class="w-6 h-6"></i>
+      </div>
+      <h3 class="text-base font-bold text-slate-900">Pemeriksaan Selesai</h3>
+      <p class="text-xs text-slate-500 leading-relaxed px-4">
+        Terima kasih telah memeriksa status kuota Anda. Silakan tutup tab atau jendela browser ini.
+      </p>
+    </div>
+
+    <!-- STATE 4: HASIL KUOTA PELANGGAN (AKTIF) -->
+    <div id="view-content" class="hidden space-y-4">
+      <!-- Peringatan Kartu Lama / Hilang (Revoked Alert) -->
+      <div id="kiosk-revoked-alert" class="hidden p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5">
+        <i data-lucide="shield-alert" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5"></i>
+        <div>
+          <p class="font-bold text-amber-300">Pemberitahuan: Kartu Fisik Ini Telah Diganti</p>
+          <p class="text-[11px] text-amber-200/90 mt-0.5">
+            Kartu QR ini pernah dilaporkan hilang dan telah digantikan dengan kartu baru: <strong id="kiosk-latest-id" class="font-mono text-white underline"></strong>. Sisa kuota di bawah tetap tersinkronisasi dengan akun keluarga Anda.
+          </p>
+        </div>
+      </div>
+
+      <!-- Kartu Identitas Kepala Keluarga (Tersensor Aman) -->
+      <div class="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
+        <div>
+          <span id="kiosk-member-id" class="px-2.5 py-0.5 rounded-full bg-slate-900 text-emerald-400 font-mono text-[11px] font-bold tracking-wider inline-block">
+            KK-REG-00001-7909
+          </span>
+          <h3 id="kiosk-nama" class="mt-1.5 text-lg font-black text-slate-900 uppercase leading-snug">
+            -
+          </h3>
+          <p id="kiosk-kk" class="font-mono text-xs font-bold text-slate-600 tracking-wider mt-0.5">
+            -
+          </p>
+        </div>
+        <p id="kiosk-address" class="text-xs text-slate-500 mt-2.5 flex items-center gap-1.5 pt-2 border-t border-slate-200/60">
+          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>
+          <span id="kiosk-address-text">-</span>
+        </p>
+      </div>
+
+      <!-- Rincian Status Kuota 30 Hari -->
+      <div class="space-y-2.5">
+        <p class="text-xs font-bold text-slate-700 uppercase tracking-wide flex items-center gap-1.5 whitespace-nowrap">
+          <i data-lucide="layers" class="w-3.5 h-3.5 text-emerald-600 shrink-0"></i>
+          <span>BATAS KUOTA : 5 PCS / 30 HARI</span>
+        </p>
+
+        <!-- Card Beras 5kg -->
+        <div id="kiosk-beras-card" class="p-3.5 rounded-2xl border transition-all">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <i data-lucide="wheat" class="w-4 h-4"></i>
+              </div>
+              <div>
+                <h4 class="text-xs font-extrabold text-slate-800">Beras 5kg</h4>
+                <p id="kiosk-beras-used" class="text-[11px] font-semibold text-slate-500">Terpakai: -</p>
+              </div>
+            </div>
+            <div id="kiosk-beras-badge" class="px-2.5 py-1 rounded-xl text-xs font-extrabold">
+              -
+            </div>
+          </div>
+          <div id="kiosk-beras-label" class="mt-2.5 pt-2 border-t border-slate-100 text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
+            <i data-lucide="calendar" class="w-3.5 h-3.5 text-slate-400"></i>
+            <span id="kiosk-beras-label-text">-</span>
+          </div>
+        </div>
+
+        <!-- Card Gas LPG 3kg -->
+        <div id="kiosk-gas-card" class="p-3.5 rounded-2xl border transition-all">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <i data-lucide="flame" class="w-4 h-4"></i>
+              </div>
+              <div>
+                <h4 class="text-xs font-extrabold text-slate-800">Gas LPG 3kg</h4>
+                <p id="kiosk-gas-used" class="text-[11px] font-semibold text-slate-500">Terpakai: -</p>
+              </div>
+            </div>
+            <div id="kiosk-gas-badge" class="px-2.5 py-1 rounded-xl text-xs font-extrabold">
+              -
+            </div>
+          </div>
+          <div id="kiosk-gas-label" class="mt-2.5 pt-2 border-t border-slate-100 text-[11px] font-bold text-slate-600 flex items-center gap-1.5">
+            <i data-lucide="calendar" class="w-3.5 h-3.5 text-slate-400"></i>
+            <span id="kiosk-gas-label-text">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tombol Segarkan Kuota Real-Time -->
+      <button
+        id="btn-kiosk-refresh"
+        type="button"
+        onclick="refreshCitizenData(this)"
+        class="w-full py-3 px-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition active:scale-[0.99]"
+      >
+        <i data-lucide="rotate-cw" class="w-4 h-4 text-emerald-400"></i>
+        <span>Segarkan / Cek Ulang Kuota</span>
+      </button>
+    </div>
+
+  </div>
+
+  <script>
+    const SUPABASE_URL = 'https://jziahfqjawqivesknkms.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_xglnlPm893o1r_Q1fXgaNA_MoS7GL11';
+    const CYCLE_DAYS = 30;
+    const MAX_BERAS = 5;
+    const MAX_GAS = 5;
+
+    let currentToken = '';
+    let currentCustomer = null;
+
+    function safeCreateIcons() {
+      if (window.lucide) {
+        window.lucide.createIcons();
+      }
+    }
+
+    function formatKKMasked(kk) {
+      if (!kk || kk.length < 16) return kk || '-';
+      return `${kk.slice(0, 4)} •••• •••• ${kk.slice(12, 16)}`;
+    }
+
+    function formatShortDateID(dateStr) {
+      if (!dateStr) return '-';
+      const parts = dateStr.split('-');
+      if (parts.length < 3) return dateStr;
+      const y = parts[0];
+      const m = Number(parts[1]);
+      const d = Number(parts[2]);
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+      return `${d} ${months[m - 1] || m} ${y}`;
+    }
+
+    function addDaysISO(dateStr, days) {
+      const d = new Date(dateStr + 'T00:00:00Z');
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function diffDaysISO(startStr, endStr) {
+      const d1 = new Date(startStr + 'T00:00:00Z');
+      const d2 = new Date(endStr + 'T00:00:00Z');
+      const diffTime = d2.getTime() - d1.getTime();
+      return Math.round(diffTime / (1000 * 60 * 60 * 24));
+    }
+
+    function getTodayISO() {
+      const now = new Date();
+      return now.toISOString().slice(0, 10);
+    }
+
+    function calculateItemStatus(noKK, itemType, logs, refDateISO) {
+      const maxQuota = itemType === 'beras' ? MAX_BERAS : MAX_GAS;
+      const qtyKey = itemType === 'beras' ? 'qty_beras' : 'qty_gas';
+      const windowStartISO = addDaysISO(refDateISO, -CYCLE_DAYS);
+
+      const logsInWindow = (logs || [])
+        .filter((l) => l.no_kk === noKK && (Number(l[qtyKey]) || 0) > 0 && l.date > windowStartISO && l.date <= refDateISO)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+      const usedInWindow = logsInWindow.reduce((sum, l) => sum + (Number(l[qtyKey]) || 0), 0);
+      const remaining = Math.max(0, maxQuota - usedInWindow);
+
+      if (usedInWindow > 0) {
+        const oldestLog = logsInWindow[0];
+        const nextCycleDate = addDaysISO(oldestLog.date, CYCLE_DAYS);
+        const daysLeft = Math.max(1, diffDaysISO(refDateISO, nextCycleDate));
+        const contextualLabel = remaining > 0
+          ? `Pemulihan kuota: ${formatShortDateID(nextCycleDate)} (${daysLeft} hr)`
+          : `Kuota Baru: ${formatShortDateID(nextCycleDate)} (${daysLeft} hr)`;
+
+        return {
+          used: usedInWindow,
+          remaining,
+          max: maxQuota,
+          daysLeft,
+          contextualLabel,
+        };
+      }
+
+      return {
+        used: 0,
+        remaining: maxQuota,
+        max: maxQuota,
+        daysLeft: CYCLE_DAYS,
+        contextualLabel: 'Kuota penuh (siap dipakai)',
+      };
+    }
+
+    function getTokenFromURL() {
+      const params = new URLSearchParams(window.location.search);
+      const val = params.get('id') || params.get('cek') || params.get('scan') || params.get('kk');
+      if (val && val.trim()) return val.trim();
+
+      // Fallback: ambil dari pathname jika diakses via route /k/KK-REG-00001-7909
+      const path = window.location.pathname;
+      const m = path.match(/\/(?:k|c|kuota)\/([^\/\?#]+)/i);
+      if (m && m[1]) {
+        return decodeURIComponent(m[1]).trim();
+      }
+      return '';
+    }
+
+    async function fetchCustomerAndQuota(token) {
+      if (!token) return null;
+      const cleanToken = token.toUpperCase();
+
+      const headers = {
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+      };
+
+      // 1. Ambil data customer secara spesifik dan aman (Targeted Query - Mencegah Mass PII Exposure)
+      let queryUrl = '';
+      const isFourDigit = /^\d{4}$/.test(cleanToken);
+      if (isFourDigit) {
+        // Pencarian 4 digit akhir: limit=2 untuk mendeteksi collision
+        queryUrl = `${SUPABASE_URL}/rest/v1/customers?or=(no_kk.like.*${cleanToken},member_id.ilike.*${cleanToken}*)&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=2`;
+      } else if (cleanToken.length === 16 && /^\d+$/.test(cleanToken)) {
+        // Pencarian 16 digit no KK
+        queryUrl = `${SUPABASE_URL}/rest/v1/customers?no_kk=eq.${cleanToken}&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=1`;
+      } else {
+        // Pencarian member_id / token kartu
+        queryUrl = `${SUPABASE_URL}/rest/v1/customers?or=(member_id.ilike.${cleanToken},member_id.ilike.*${cleanToken}*)&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=2`;
+      }
+
+      const resCust = await fetch(queryUrl, { headers });
+      if (!resCust.ok) throw new Error('Gagal memuat data pelanggan');
+      const customersFound = await resCust.json();
+
+      // Cek tabrakan jika pencarian 4 digit:
+      // Jika ditemukan > 1 keluarga, JANGAN bocorkan PII/nama/alamat mana pun
+      if (isFourDigit && customersFound.length > 1) {
+        return {
+          collision: true,
+          message: 'Ditemukan lebih dari satu keluarga dengan 4 digit akhir yang sama. Demi privasi, silakan scan QR Kartu Kuota atau masukkan 16 digit Nomor KK lengkap.'
+        };
+      }
+
+      let cust = customersFound.find(c => (c.no_kk || '').endsWith(cleanToken) || (c.member_id || '').endsWith(cleanToken)) || customersFound[0] || null;
+
+      if (!cust) return null;
+
+      // 2. Ambil logs transaksi pelanggan tersebut
+      const today = getTodayISO();
+      const thirtyFiveDaysAgo = addDaysISO(today, -35);
+      const resLogs = await fetch(`${SUPABASE_URL}/rest/v1/logs?no_kk=eq.${cust.no_kk}&date=gte.${thirtyFiveDaysAgo}&select=id,date,time,no_kk,nama,qty_beras,qty_gas,revisi_note`, { headers });
+      let logs = [];
+      if (resLogs.ok) {
+        logs = await resLogs.json();
+      }
+
+      const beras = calculateItemStatus(cust.no_kk, 'beras', logs, today);
+      const gas = calculateItemStatus(cust.no_kk, 'gas', logs, today);
+
+      return {
+        customer: cust,
+        beras,
+        gas,
+      };
+    }
+
+    function renderCitizenData(data) {
+      const cust = data.customer;
+      currentCustomer = cust;
+
+      // Periksa apakah URL token adalah kartu yang pernah di-revoke
+      const tokenURL = getTokenFromURL().toUpperCase();
+      const isRevoked = Array.isArray(cust.revoked_ids) && cust.revoked_ids.some(r => String(r).toUpperCase() === tokenURL);
+      const revAlert = document.getElementById('kiosk-revoked-alert');
+      if (revAlert) {
+        if (isRevoked) {
+          revAlert.classList.remove('hidden');
+          const latestIdEl = document.getElementById('kiosk-latest-id');
+          if (latestIdEl) latestIdEl.textContent = cust.member_id || 'Kartu Resmi Baru';
+        } else {
+          revAlert.classList.add('hidden');
+        }
+      }
+
+      document.getElementById('kiosk-member-id').textContent = cust.member_id || 'KK-REG-00001-7909';
+      document.getElementById('kiosk-nama').textContent = cust.nama || '-';
+      document.getElementById('kiosk-kk').textContent = formatKKMasked(cust.no_kk);
+
+      const wil = cust.kabupaten || cust.provinsi || 'CIMAHI';
+      document.getElementById('kiosk-address-text').textContent = `${wil}, ••••••••`;
+
+      // Render Beras
+      const berasCard = document.getElementById('kiosk-beras-card');
+      const berasUsed = document.getElementById('kiosk-beras-used');
+      const berasBadge = document.getElementById('kiosk-beras-badge');
+      const berasLabelText = document.getElementById('kiosk-beras-label-text');
+
+      berasUsed.textContent = `Terpakai: ${data.beras.used} / ${data.beras.max} karung`;
+      berasLabelText.textContent = data.beras.contextualLabel;
+
+      if (data.beras.remaining === 0) {
+        berasCard.className = 'p-3.5 rounded-2xl border border-rose-200 bg-rose-50/70 transition-all';
+        berasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-rose-100 text-rose-700 border border-rose-300';
+        berasBadge.textContent = '0 karung (Habis)';
+      } else {
+        berasCard.className = 'p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 transition-all';
+        berasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300';
+        berasBadge.textContent = `${data.beras.remaining} sak (Tersedia)`;
+      }
+
+      // Render Gas
+      const gasCard = document.getElementById('kiosk-gas-card');
+      const gasUsed = document.getElementById('kiosk-gas-used');
+      const gasBadge = document.getElementById('kiosk-gas-badge');
+      const gasLabelText = document.getElementById('kiosk-gas-label-text');
+
+      gasUsed.textContent = `Terpakai: ${data.gas.used} / ${data.gas.max} tabung`;
+      gasLabelText.textContent = data.gas.contextualLabel;
+
+      if (data.gas.remaining === 0) {
+        gasCard.className = 'p-3.5 rounded-2xl border border-rose-200 bg-rose-50/70 transition-all';
+        gasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-rose-100 text-rose-700 border border-rose-300';
+        gasBadge.textContent = '0 pcs (Habis)';
+      } else {
+        gasCard.className = 'p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 transition-all';
+        gasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300';
+        gasBadge.textContent = `${data.gas.remaining} pcs (Tersedia)`;
+      }
+
+      document.getElementById('view-loading').classList.add('hidden');
+      document.getElementById('view-error').classList.add('hidden');
+      document.getElementById('view-exit').classList.add('hidden');
+      document.getElementById('view-content').classList.remove('hidden');
+
+      safeCreateIcons();
+    }
+
+    async function init() {
+      currentToken = getTokenFromURL();
+      if (!currentToken) {
+        document.getElementById('view-loading').classList.add('hidden');
+        document.getElementById('error-message').textContent = 'Tautan tidak valid atau kode identitas pelanggan belum dimasukkan.';
+        document.getElementById('view-error').classList.remove('hidden');
+        safeCreateIcons();
+        return;
+      }
+
+      try {
+        const data = await fetchCustomerAndQuota(currentToken);
+        if (!data) {
+          document.getElementById('view-loading').classList.add('hidden');
+          const titleEl = document.getElementById('error-title');
+          if (titleEl) titleEl.textContent = 'Data Pelanggan Tidak Ditemukan';
+          document.getElementById('error-message').textContent = 'Data pelanggan tidak ditemukan. Periksa kembali nomor KK atau scan QR Kartu.';
+          document.getElementById('view-error').classList.remove('hidden');
+          safeCreateIcons();
+          return;
+        }
+        if (data.collision) {
+          document.getElementById('view-loading').classList.add('hidden');
+          const titleEl = document.getElementById('error-title');
+          if (titleEl) titleEl.textContent = 'Proteksi Privasi Pelanggan';
+          document.getElementById('error-message').textContent = data.message;
+          document.getElementById('view-error').classList.remove('hidden');
+          safeCreateIcons();
+          return;
+        }
+        renderCitizenData(data);
+      } catch (err) {
+        console.error('Error load citizen quota:', err);
+        document.getElementById('view-loading').classList.add('hidden');
+        const titleEl = document.getElementById('error-title');
+        if (titleEl) titleEl.textContent = 'Kendala Koneksi Server';
+        document.getElementById('error-message').textContent = 'Koneksi ke server database mengalami kendala. Periksa jaringan internet HP Anda.';
+        document.getElementById('view-error').classList.remove('hidden');
+        safeCreateIcons();
+      }
+    }
+
+    async function refreshCitizenData(btn) {
+      const origHTML = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = `
+        <i data-lucide="loader-2" class="w-4 h-4 text-emerald-400 animate-spin"></i>
+        <span>Memperbarui Data...</span>
+      `;
+      safeCreateIcons();
+
+      try {
+        const data = await fetchCustomerAndQuota(currentToken);
+        if (data && !data.collision) {
+          renderCitizenData(data);
+        } else if (data && data.collision) {
+          document.getElementById('view-loading').classList.add('hidden');
+          document.getElementById('view-content').classList.add('hidden');
+          const titleEl = document.getElementById('error-title');
+          if (titleEl) titleEl.textContent = 'Proteksi Privasi Pelanggan';
+          document.getElementById('error-message').textContent = data.message;
+          document.getElementById('view-error').classList.remove('hidden');
+        }
+      } catch (err) {
+        console.error('Refresh error:', err);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+        safeCreateIcons();
+      }
+    }
+
+    function handleClosePage() {
+      // 1. Coba tutup tab seketika jika didukung browser
+      try {
+        window.close();
+      } catch (e) {}
+
+      // 2. Jika browser mobile sandbox membatasi window.close():
+      // Alihkan langsung ke beranda publik (bukan portal admin)
+      setTimeout(() => {
+        window.location.replace('/');
+      }, 100);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      safeCreateIcons();
+      init();
+    });
+  </script>
+</body>
+</html>
