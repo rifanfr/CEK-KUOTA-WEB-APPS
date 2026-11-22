@@ -3718,7 +3718,12 @@ const INDONESIA_REGIONS = {
       WAREHOUSE: 'catat_kuota_kk_warehouse_prod_v2',
       DO_SEQ: 'catat_kuota_kk_doseq_prod_v2',
       SCHEMA_VERSION: 'catat_kuota_kk_schema_version',
+      SYNC_REV: 'catat_kuota_kk_sync_rev_v2',
     };
+
+    const TAB_INSTANCE_ID = (typeof window !== 'undefined' && window.crypto && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID().slice(0, 8)
+      : ('TAB-' + Math.random().toString(36).slice(2, 10));
 
     // Versi skema penyimpanan. Naikkan setiap ada perubahan bentuk data,
     // lalu tambahkan langkah migrasinya di migrateState().
@@ -4121,6 +4126,26 @@ const INDONESIA_REGIONS = {
       return formatted;
     }
 
+    function normalizePersonName(str) {
+      return String(str || '').toUpperCase().replace(/[^A-Z ]/g, '').replace(/\s+/g, ' ').trim();
+    }
+
+    function findDuplicateNameCustomer(nama, desa, kecamatan, excludeNoKK = null) {
+      const nameKey = normalizePersonName(nama);
+      if (!nameKey) return null;
+      const desaKey = normalizePersonName(desa);
+      const kecKey = normalizePersonName(kecamatan);
+      return (
+        (state.customers || []).find(
+          (c) =>
+            (!excludeNoKK || c.no_kk !== excludeNoKK) &&
+            normalizePersonName(c.nama) === nameKey &&
+            normalizePersonName(c.desa) === desaKey &&
+            normalizePersonName(c.kecamatan) === kecKey
+        ) || null
+      );
+    }
+
     function generateNextMemberId(noKK = '') {
       let maxNum = 0;
       state.customers.forEach((c) => {
@@ -4351,35 +4376,87 @@ const INDONESIA_REGIONS = {
       return true;
     }
 
-    function loadState() {
+    function quarantineCorruptStorage(key, rawValue) {
       try {
-        // Bersihkan sisa demo key versi lama jika ada
-        ['catat_kuota_kk_customers_v8', 'catat_kuota_kk_logs_v8', 'catat_kuota_kk_warehouse_v8'].forEach((k) => {
-          try { localStorage.removeItem(k); } catch (e) {}
-        });
-
-        const storedVersion = parseInt(localStorage.getItem(STORAGE_KEYS.SCHEMA_VERSION), 10) || 1;
-        const savedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-        const savedCustomers = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
-        const savedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
-        const savedWarehouse = localStorage.getItem(STORAGE_KEYS.WAREHOUSE);
-        const savedDOSeq = localStorage.getItem(STORAGE_KEYS.DO_SEQ);
-
-        if (savedSettings) {
-          state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(savedSettings) };
-        }
-        state.customers = savedCustomers ? JSON.parse(savedCustomers) : [];
-        state.logs = savedLogs ? JSON.parse(savedLogs) : [];
-        state.warehouseLogs = savedWarehouse ? JSON.parse(savedWarehouse) : [];
-        state.doSeqTracker = savedDOSeq ? JSON.parse(savedDOSeq) : {};
-
-        migrateState(storedVersion);
-        localStorage.setItem(STORAGE_KEYS.SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
+        const backupKey = `catat_kuota_corrupt_backup_${key}_${Date.now()}`;
+        localStorage.setItem(backupKey, String(rawValue));
+        return backupKey;
       } catch (e) {
-        console.error('loadState gagal, data lokal tidak diubah:', e);
-        state.customers = state.customers || [];
-        state.logs = state.logs || [];
-        state.warehouseLogs = state.warehouseLogs || [];
+        console.error('Gagal menyimpan karantina data korup:', e);
+        return null;
+      }
+    }
+
+    function safeReadStorageJSON(key, fallbackValue, validatorFn) {
+      let raw = null;
+      try {
+        raw = localStorage.getItem(key);
+      } catch (e) {
+        return { ok: false, value: fallbackValue, corrupted: false, raw: null };
+      }
+      if (raw === null || raw === '') {
+        return { ok: true, value: fallbackValue, corrupted: false, raw: null };
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof validatorFn === 'function' && !validatorFn(parsed)) {
+          throw new Error(`Struktur data ${key} tidak sesuai tipe yang diharapkan`);
+        }
+        return { ok: true, value: parsed, corrupted: false, raw };
+      } catch (e) {
+        console.error(`Data localStorage korup pada ${key}:`, e);
+        const backupKey = quarantineCorruptStorage(key, raw);
+        return { ok: false, value: fallbackValue, corrupted: true, backupKey, raw };
+      }
+    }
+
+    function loadState() {
+      const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+      const isArr = (v) => Array.isArray(v);
+
+      // Bersihkan sisa demo key versi lama jika ada
+      ['catat_kuota_kk_customers_v8', 'catat_kuota_kk_logs_v8', 'catat_kuota_kk_warehouse_v8'].forEach((k) => {
+        try { localStorage.removeItem(k); } catch (e) {}
+      });
+
+      const storedVersion = parseInt(localStorage.getItem(STORAGE_KEYS.SCHEMA_VERSION), 10) || 1;
+      const corruptedKeys = [];
+
+      const resSettings = safeReadStorageJSON(STORAGE_KEYS.SETTINGS, null, isPlainObj);
+      if (resSettings.corrupted) corruptedKeys.push('Pengaturan');
+      else if (resSettings.value) state.settings = { ...DEFAULT_SETTINGS, ...resSettings.value };
+
+      const resCustomers = safeReadStorageJSON(STORAGE_KEYS.CUSTOMERS, [], isArr);
+      if (resCustomers.corrupted) corruptedKeys.push('Data KK');
+      state.customers = resCustomers.value;
+
+      const resLogs = safeReadStorageJSON(STORAGE_KEYS.LOGS, [], isArr);
+      if (resLogs.corrupted) corruptedKeys.push('Riwayat Pengambilan');
+      state.logs = resLogs.value;
+
+      const resWarehouse = safeReadStorageJSON(STORAGE_KEYS.WAREHOUSE, [], isArr);
+      if (resWarehouse.corrupted) corruptedKeys.push('Log Gudang');
+      state.warehouseLogs = resWarehouse.value;
+
+      const resDOSeq = safeReadStorageJSON(STORAGE_KEYS.DO_SEQ, {}, isPlainObj);
+      if (resDOSeq.corrupted) corruptedKeys.push('Urutan DO');
+      state.doSeqTracker = resDOSeq.value;
+
+      const resRev = safeReadStorageJSON(STORAGE_KEYS.SYNC_REV, null, isPlainObj);
+      state._lastSyncRev = (resRev.value && typeof resRev.value.rev === 'number') ? resRev.value.rev : 0;
+
+      migrateState(storedVersion);
+      try {
+        localStorage.setItem(STORAGE_KEYS.SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
+      } catch (e) {}
+
+      state._corruptRecoveryKeys = corruptedKeys;
+      if (corruptedKeys.length > 0 && typeof setTimeout === 'function') {
+        setTimeout(() => {
+          if (typeof showToast === 'function') {
+            showToast(`Peringatan: Data lokal rusak pada [${corruptedKeys.join(', ')}] telah diamankan ke backup karantina.`, 'error');
+          }
+        }, 300);
       }
     }
 
@@ -4424,14 +4501,115 @@ const INDONESIA_REGIONS = {
 
     function persistState() {
       try {
+        const revPayload = { rev: Date.now(), tabId: TAB_INSTANCE_ID };
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings));
         localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(state.customers));
         localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(state.logs));
         localStorage.setItem(STORAGE_KEYS.WAREHOUSE, JSON.stringify(state.warehouseLogs));
         localStorage.setItem(STORAGE_KEYS.DO_SEQ, JSON.stringify(state.doSeqTracker || {}));
+        localStorage.setItem(STORAGE_KEYS.SYNC_REV, JSON.stringify(revPayload));
+        state._lastSyncRev = revPayload.rev;
+        return true;
       } catch (e) {
-        // Fallback memori
+        console.error('persistState gagal menulis ke localStorage:', e);
+        if (typeof showToast === 'function') {
+          const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22);
+          showToast(
+            isQuota
+              ? 'Penyimpanan browser penuh (QuotaExceeded)! Ekspor backup data segera.'
+              : 'Gagal menyimpan data ke penyimpanan lokal browser.',
+            'error'
+          );
+        }
+        return false;
       }
+    }
+
+    function syncLatestFromLocalStorage() {
+      const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+      const isArr = (v) => Array.isArray(v);
+      let changed = false;
+
+      const resSettings = safeReadStorageJSON(STORAGE_KEYS.SETTINGS, null, isPlainObj);
+      if (resSettings.ok && resSettings.value) {
+        const merged = { ...DEFAULT_SETTINGS, ...resSettings.value };
+        if (JSON.stringify(merged) !== JSON.stringify(state.settings)) {
+          state.settings = merged;
+          changed = true;
+        }
+      }
+
+      const resCustomers = safeReadStorageJSON(STORAGE_KEYS.CUSTOMERS, null, isArr);
+      if (resCustomers.ok && resCustomers.value && JSON.stringify(resCustomers.value) !== JSON.stringify(state.customers)) {
+        state.customers = resCustomers.value;
+        changed = true;
+      }
+
+      const resLogs = safeReadStorageJSON(STORAGE_KEYS.LOGS, null, isArr);
+      if (resLogs.ok && resLogs.value && JSON.stringify(resLogs.value) !== JSON.stringify(state.logs)) {
+        state.logs = resLogs.value;
+        changed = true;
+      }
+
+      const resWarehouse = safeReadStorageJSON(STORAGE_KEYS.WAREHOUSE, null, isArr);
+      if (resWarehouse.ok && resWarehouse.value && JSON.stringify(resWarehouse.value) !== JSON.stringify(state.warehouseLogs)) {
+        state.warehouseLogs = resWarehouse.value;
+        changed = true;
+      }
+
+      const resDOSeq = safeReadStorageJSON(STORAGE_KEYS.DO_SEQ, null, isPlainObj);
+      if (resDOSeq.ok && resDOSeq.value && JSON.stringify(resDOSeq.value) !== JSON.stringify(state.doSeqTracker || {})) {
+        state.doSeqTracker = resDOSeq.value;
+        changed = true;
+      }
+
+      const resRev = safeReadStorageJSON(STORAGE_KEYS.SYNC_REV, null, isPlainObj);
+      if (resRev.ok && resRev.value && typeof resRev.value.rev === 'number') {
+        state._lastSyncRev = resRev.value.rev;
+      }
+
+      if (changed) {
+        migrateState(CURRENT_SCHEMA_VERSION);
+      }
+      return changed;
+    }
+
+    let _lastCrossTabToastAt = 0;
+
+    function handleCrossTabStorageEvent(event) {
+      if (!event || !event.key) return;
+      const watchedKeys = [
+        STORAGE_KEYS.SETTINGS,
+        STORAGE_KEYS.CUSTOMERS,
+        STORAGE_KEYS.LOGS,
+        STORAGE_KEYS.WAREHOUSE,
+        STORAGE_KEYS.DO_SEQ,
+        STORAGE_KEYS.SYNC_REV,
+      ];
+      if (!watchedKeys.includes(event.key)) return;
+
+      if (event.key === STORAGE_KEYS.SYNC_REV && event.newValue) {
+        try {
+          const meta = JSON.parse(event.newValue);
+          if (meta && meta.tabId === TAB_INSTANCE_ID) return;
+        } catch (e) {}
+      }
+
+      const changed = syncLatestFromLocalStorage();
+      if (changed) {
+        if (typeof refreshAllUI === 'function') {
+          try { refreshAllUI(); } catch (e) {}
+        }
+        const now = Date.now();
+        if (typeof showToast === 'function' && now - _lastCrossTabToastAt > 2500) {
+          _lastCrossTabToastAt = now;
+          showToast('Data diperbarui otomatis dari tab kasir lain.', 'info');
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('storage', handleCrossTabStorageEvent);
     }
 
     // =========================================================================
@@ -5765,14 +5943,29 @@ const INDONESIA_REGIONS = {
           return;
         }
         const defReg = getDefaultRegionHierarchy();
+        const inlineProv = state.record.newCustomerProv || defReg.prov;
+        const inlineKab = state.record.newCustomerKab || defReg.kab;
+        const inlineKec = state.record.newCustomerKec || defReg.kec;
+        const inlineDesa = state.record.newCustomerDesa || defReg.desa;
+
+        const nameClashInline = findDuplicateNameCustomer(newName, inlineDesa, inlineKec);
+        if (nameClashInline) {
+          const proceedInline = window.confirm(
+            `Nama "${newName}" sudah terdaftar di ${inlineDesa}, ${inlineKec} dengan KK berbeda.\n` +
+              `Kemungkinan data ganda atau salah input.\n\nLanjut simpan tetap?`
+          );
+          if (!proceedInline) return;
+          showToast('Duplikat nama dikonfirmasi oleh petugas. Data tetap dilanjutkan.', 'info');
+        }
+
         customer = {
           member_id: generateNextMemberId(kk),
           no_kk: kk,
           nama: newName,
-          provinsi: state.record.newCustomerProv || defReg.prov,
-          kabupaten: state.record.newCustomerKab || defReg.kab,
-          kecamatan: state.record.newCustomerKec || defReg.kec,
-          desa: state.record.newCustomerDesa || defReg.desa,
+          provinsi: inlineProv,
+          kabupaten: inlineKab,
+          kecamatan: inlineKec,
+          desa: inlineDesa,
           detail: (state.record.newCustomerDetail || '').trim().toUpperCase(),
           created_at: new Date().toISOString(),
         };
@@ -5785,6 +5978,12 @@ const INDONESIA_REGIONS = {
             'Daftarkan KK Baru?',
             `Daftarkan ${customer.nama} (${formatKKMasked(customer.no_kk)}) ke daftar pelanggan tanpa pencatatan barang saat ini?`,
             () => {
+              syncLatestFromLocalStorage();
+              if (state.customers.some((c) => c.no_kk === customer.no_kk)) {
+                refreshAllUI();
+                showToast(`Data KK ${customer.nama} sudah didaftarkan di tab lain.`, 'info');
+                return;
+              }
               state.customers.unshift(customer);
               state.record.newCustomerName = '';
               state.record.newCustomerDetail = '';
@@ -5864,10 +6063,23 @@ const INDONESIA_REGIONS = {
             console.warn('Pre-commit server check warning:', e);
           }
 
+          // Re-sync penyimpanan lokal tepat sebelum commit agar transaksi dari tab lain tidak tertimpa (Poin 45)
+          syncLatestFromLocalStorage();
+
+          // Re-validasi kuota pelanggan setelah sync tab lokal
+          const quotaNow = getCustomerQuotaStats(customer.no_kk, txDateStr);
+          if (qBeras > quotaNow.beras.remaining || qGas > quotaNow.gas.remaining) {
+            refreshAllUI();
+            showToast('Transaksi dibatalkan: sisa kuota telah terpakai di tab kasir lain (Multi-Tab Guard)!', 'error');
+            isSubmittingRecord = false;
+            return;
+          }
+
           // Re-validasi stok tepat sebelum commit: cegah dua petugas mencatat
           // pengambilan bersamaan hingga stok gudang minus.
           const stockNow = getWarehouseStockSummary();
           if (qBeras > stockNow.berasStock || qGas > stockNow.gasStock) {
+            refreshAllUI();
             showToast('Transaksi dibatalkan: stok gudang berubah dan tidak lagi mencukupi (Stock Guard)!', 'error');
             isSubmittingRecord = false;
             return;
@@ -6490,14 +6702,7 @@ const INDONESIA_REGIONS = {
 
       // Cek duplikat nama (poin 33). Nomor KK boleh beda, tapi nama sama persis
       // pada wilayah yang sama sering menandakan salah input / data ganda.
-      const normalizeName = (s) => String(s || '').toUpperCase().replace(/[^A-Z ]/g, '').replace(/\s+/g, ' ').trim();
-      const nameKey = normalizeName(nama);
-      const nameClash = state.customers.find(
-        (c) =>
-          normalizeName(c.nama) === nameKey &&
-          normalizeName(c.desa) === normalizeName(desa) &&
-          normalizeName(c.kecamatan) === normalizeName(kecamatan)
-      );
+      const nameClash = findDuplicateNameCustomer(nama, desa, kecamatan);
       if (nameClash) {
         const proceed = window.confirm(
           `Nama "${nama}" sudah terdaftar di ${desa}, ${kecamatan} dengan KK berbeda.\n` +
