@@ -30,6 +30,18 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" defer></script>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js" defer></script>
 
+  <!--
+    Konfigurasi runtime Supabase.
+    JANGAN menaruh anon key langsung di file ini. Saat build/deploy, jalankan
+    `node scripts/generate-config.js` dengan environment variable SUPABASE_URL
+    dan SUPABASE_ANON_KEY. File config.js dihasilkan dan tidak di-commit.
+    Jika config.js tidak ada / kosong, aplikasi berjalan mode offline lokal.
+  -->
+  <script>
+    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { supabaseUrl: '', supabaseAnonKey: '' };
+  </script>
+  <script src="config.js"></script>
+
   <style>
     body {
       font-family: 'Inter', system-ui, sans-serif;
@@ -231,12 +243,58 @@
         background: #ffffff !important;
       }
 
-      body * {
+      body:not(.print-report-mode) * {
         visibility: hidden !important;
       }
-      .no-print {
+      body:not(.print-report-mode) .no-print {
         display: none !important;
         visibility: hidden !important;
+      }
+
+      /* Mode cetak dokumen (struk riwayat / surat jalan gudang) */
+      body.print-report-mode * {
+        visibility: visible !important;
+      }
+      body.print-report-mode .no-print,
+      body.print-report-mode header,
+      body.print-report-mode #login-gate-screen,
+      body.print-report-mode #public-kiosk-screen,
+      body.print-report-mode .modal-backdrop,
+      body.print-report-mode [id^='modal-'] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+      body.print-report-mode #app-shell {
+        display: block !important;
+        min-height: auto !important;
+      }
+      body.print-report-mode .print-report-root {
+        display: block !important;
+        position: static !important;
+        width: 100% !important;
+        max-width: 100% !important;
+        background: #ffffff !important;
+        color: #0f172a !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      body.print-report-mode .print-report-root table {
+        width: 100% !important;
+        border-collapse: collapse !important;
+        font-size: 9pt !important;
+      }
+      body.print-report-mode .print-report-root th,
+      body.print-report-mode .print-report-root td {
+        border: 0.6pt solid #94a3b8 !important;
+        padding: 3pt 5pt !important;
+        vertical-align: top !important;
+      }
+      body.print-report-mode .print-report-root thead th {
+        background: #e2e8f0 !important;
+      }
+      body.print-report-mode .print-report-root .pagebreak {
+        page-break-before: always !important;
+        break-before: page !important;
       }
 
       #printable-qr-card-wrapper,
@@ -479,14 +537,6 @@
     .animate-shake {
       animation: shake 0.4s ease-in-out;
     }
-    @keyframes shake {
-      0%, 100% { transform: translateX(0); }
-      20%, 60% { transform: translateX(-6px); }
-      40%, 80% { transform: translateX(6px); }
-    }
-    .animate-shake {
-      animation: shake 0.4s ease-in-out;
-    }
     .shackle-unlocked {
       transform-origin: 7px 11px;
       transform: rotate(-28deg) translateY(-2px);
@@ -542,7 +592,7 @@
                 <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.8"/>
                 <path d="m9 12.5 2 2 4-4" stroke="#0284c7" stroke-width="2"/>
               </svg>
-              <span id="cloud-badge-text" class="hidden sm:inline">Tersinkron</span>
+              <span id="cloud-badge-text" class="hidden sm:inline">Mode Lokal</span>
             </button>
 
             <!-- Kontrol Tanggal Simulasi / Operasional + Tombol Lompat Hari -->
@@ -1192,8 +1242,6 @@
               </button>
               <button
                 type="button"
-              <button
-                type="button"
                 id="btn-lock-warehouse"
                 onclick="lockWarehouseAdmin()"
                 class="group relative inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-rose-50 text-slate-700 hover:text-rose-700 border border-slate-300 hover:border-rose-300 font-bold text-xs transition-all duration-300 shadow-2xs whitespace-nowrap cursor-pointer active:scale-95"
@@ -1546,7 +1594,7 @@
               <input
                 type="text"
                 id="set-supabase-url"
-                value="https://jziahfqjawqivesknkms.supabase.co"
+                value=""
                 placeholder="https://xxx.supabase.co"
                 class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -1556,7 +1604,7 @@
               <input
                 type="password"
                 id="set-supabase-key"
-                value="sb_publishable_xglnlPm893o1r_Q1fXgaNA_MoS7GL11"
+                value=""
                 placeholder="sb_publishable_..."
                 class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl font-mono text-xs text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
               />
@@ -2325,8 +2373,8 @@
   <!-- MODAL EDIT DATA KARTU KELUARGA (BALANCED 2-COLUMN DESKTOP VIEW)         -->
   <!-- ===================================================================== -->
   <div id="modal-edit-customer" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center">
-    <div class="relative w-full max-w-3xl my-auto animate-fade-in">
-      <form onsubmit="handleSaveEditCustomer(event)" class="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden">
+    <div class="relative w-full max-w-3xl my-auto max-h-[calc(100dvh-2rem)] flex flex-col animate-fade-in">
+      <form onsubmit="handleSaveEditCustomer(event)" class="bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-full">
         <div class="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
           <div class="flex items-center gap-2.5">
             <div class="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0 shadow-2xs">
@@ -2342,7 +2390,7 @@
           </button>
         </div>
 
-        <div class="p-5">
+        <div class="p-5 overflow-y-auto overscroll-contain flex-1 min-h-0">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <!-- KOLOM KIRI: IDENTITAS KEPALA KELUARGA -->
             <div class="space-y-3.5">
@@ -2505,7 +2553,7 @@
           </div>
         </div>
 
-        <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5">
+        <div class="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
           <button
             type="button"
             onclick="closeEditCustomerModal()"
@@ -3653,7 +3701,15 @@ const INDONESIA_REGIONS = {
       return `${prefix}-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     }
 
-    const BASE_TODAY_DATE = new Date().toLocaleDateString('en-CA');
+    // Tanggal operasional awal: pakai tanggal lokal perangkat (WIB), bukan UTC,
+    // agar dini hari di Indonesia tidak terbaca sebagai hari sebelumnya.
+    const BASE_TODAY_DATE = (function () {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    })();
 
     const STORAGE_KEYS = {
       SETTINGS: 'catat_kuota_kk_settings_prod_v2',
@@ -3661,7 +3717,12 @@ const INDONESIA_REGIONS = {
       LOGS: 'catat_kuota_kk_logs_prod_v2',
       WAREHOUSE: 'catat_kuota_kk_warehouse_prod_v2',
       DO_SEQ: 'catat_kuota_kk_doseq_prod_v2',
+      SCHEMA_VERSION: 'catat_kuota_kk_schema_version',
     };
+
+    // Versi skema penyimpanan. Naikkan setiap ada perubahan bentuk data,
+    // lalu tambahkan langkah migrasinya di migrateState().
+    const CURRENT_SCHEMA_VERSION = 3;
 
     // =========================================================================
     // GERBANG KEAMANAN SESI OPERATOR (LOGIN GATEWAY)
@@ -3719,7 +3780,12 @@ const INDONESIA_REGIONS = {
       }
 
       const configuredPin = String(state.settings?.adminPin || '').trim();
-      const validAdminPin = configuredPin || '1234';
+      const validAdminPin = configuredPin;
+
+      if (!validAdminPin) {
+        showToast('PIN gerai belum diatur. Buka Pengaturan untuk menetapkan PIN.', 'error');
+        return;
+      }
 
       if (pin === validAdminPin) {
         failedPinAttempts = 0;
@@ -3789,10 +3855,10 @@ const INDONESIA_REGIONS = {
       cycleDays: 30,
       defaultProv: 'JAWA BARAT',
       defaultKab: 'KAB. BOGOR',
-      adminPin: '1234',
+      adminPin: '',
       lowStockThreshold: 20,
-      supabaseUrl: 'https://jziahfqjawqivesknkms.supabase.co',
-      supabaseKey: 'sb_publishable_xglnlPm893o1r_Q1fXgaNA_MoS7GL11',
+      supabaseUrl: (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseUrl) || '',
+      supabaseKey: (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || '',
     };
 
     let state = {
@@ -3822,6 +3888,10 @@ const INDONESIA_REGIONS = {
       },
       html5QrScanner: null,
       currentQRCustomer: null,
+      // Mode kios TIDAK dipersistensi: setiap reload selalu kembali ke konsol
+      // petugas agar warga tidak tertinggal di layar kios (poin 39).
+      isPublicKioskMode: false,
+      currentKioskCustomer: null,
     };
 
     function safeCreateIcons() {
@@ -3877,12 +3947,31 @@ const INDONESIA_REGIONS = {
       return Date.UTC(y, m - 1, d);
     }
 
+    // Menggeser tanggal ISO sebanyak N hari memakai aritmetika kalender UTC.
+    // Tidak memakai penambahan milidetik mentah agar tidak bergeser saat
+    // melewati DST / batas zona waktu.
     function addDaysISO(isoDateStr, days) {
-      const ms = parseISODateUTC(isoDateStr) + days * 86400000;
-      const dt = new Date(ms);
-      const y = dt.getUTCFullYear();
-      const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
-      const d = String(dt.getUTCDate()).padStart(2, '0');
+      const [y, m, d] = isoDateStr.split('-').map((n) => parseInt(n, 10));
+      const dt = new Date(Date.UTC(y, m - 1, d));
+      dt.setUTCDate(dt.getUTCDate() + days);
+      const outY = dt.getUTCFullYear();
+      const outM = String(dt.getUTCMonth() + 1).padStart(2, '0');
+      const outD = String(dt.getUTCDate()).padStart(2, '0');
+      return `${outY}-${outM}-${outD}`;
+    }
+
+    // Jumlah hari dalam bulan tertentu (aman untuk tahun kabisat).
+    function daysInMonthISO(isoDateStr) {
+      const [y, m] = isoDateStr.split('-').map((n) => parseInt(n, 10));
+      return new Date(Date.UTC(y, m, 0)).getUTCDate();
+    }
+
+    // Tanggal hari ini menurut zona waktu perangkat (bukan UTC), format YYYY-MM-DD.
+    function todayLocalISO() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
       return `${y}-${m}-${d}`;
     }
 
@@ -4069,7 +4158,14 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     // 5. DATA CONTOH SKENARIO SIKLUS 30 HARI & STOK GUDANG + PERSISTENSI
     // =========================================================================
-    function createDemoData() {
+    function createDemoData(options) {
+      // Guard: jangan pernah menimpa data pengguna yang sudah ada kecuali diminta eksplisit.
+      const opts = options || {};
+      const existingDataCount = (state.customers?.length || 0) + (state.logs?.length || 0) + (state.warehouseLogs?.length || 0);
+      if (existingDataCount > 0 && !opts.force) {
+        console.warn('createDemoData dibatalkan: sudah ada data pengguna. Gunakan { force: true } untuk reset eksplisit.');
+        return false;
+      }
       const demoCustomers = [
         {
           member_id: 'KK-REG-00001-0001',
@@ -4252,6 +4348,7 @@ const INDONESIA_REGIONS = {
       state.logs = demoLogs;
       state.warehouseLogs = demoWarehouseLogs;
       persistState();
+      return true;
     }
 
     function loadState() {
@@ -4261,6 +4358,7 @@ const INDONESIA_REGIONS = {
           try { localStorage.removeItem(k); } catch (e) {}
         });
 
+        const storedVersion = parseInt(localStorage.getItem(STORAGE_KEYS.SCHEMA_VERSION), 10) || 1;
         const savedSettings = localStorage.getItem(STORAGE_KEYS.SETTINGS);
         const savedCustomers = localStorage.getItem(STORAGE_KEYS.CUSTOMERS);
         const savedLogs = localStorage.getItem(STORAGE_KEYS.LOGS);
@@ -4274,11 +4372,54 @@ const INDONESIA_REGIONS = {
         state.logs = savedLogs ? JSON.parse(savedLogs) : [];
         state.warehouseLogs = savedWarehouse ? JSON.parse(savedWarehouse) : [];
         state.doSeqTracker = savedDOSeq ? JSON.parse(savedDOSeq) : {};
+
+        migrateState(storedVersion);
+        localStorage.setItem(STORAGE_KEYS.SCHEMA_VERSION, String(CURRENT_SCHEMA_VERSION));
       } catch (e) {
-        state.customers = [];
-        state.logs = [];
-        state.warehouseLogs = [];
+        console.error('loadState gagal, data lokal tidak diubah:', e);
+        state.customers = state.customers || [];
+        state.logs = state.logs || [];
+        state.warehouseLogs = state.warehouseLogs || [];
       }
+    }
+
+    // Migrasi bentuk data antar versi skema. Fungsi ini harus IDEMPOTEN dan
+    // tidak boleh menghapus data pengguna.
+    function migrateState(fromVersion) {
+      let version = fromVersion;
+      const hasData = (state.customers.length + state.logs.length + state.warehouseLogs.length) > 0;
+
+      // v1 -> v2: pastikan setiap entri punya member_id dan normalisasi tipe
+      if (version < 2) {
+        state.customers = state.customers.map((c, idx) => {
+          if (!c.member_id) c.member_id = `KK-MIGR-${String(idx + 1).padStart(5, '0')}`;
+          if (typeof c.nama === 'string') c.nama = c.nama.trim().toUpperCase();
+          return c;
+        });
+        version = 2;
+      }
+
+      // v2 -> v3: pastikan qty numerik dan field baru yang wajib ada
+      if (version < 3) {
+        const toNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+        state.logs = state.logs.map((l) => ({
+          ...l,
+          qty_beras: toNum(l.qty_beras),
+          qty_gas: toNum(l.qty_gas),
+          total_pcs: toNum(l.total_pcs) || (toNum(l.qty_beras) + toNum(l.qty_gas)),
+        }));
+        state.warehouseLogs = state.warehouseLogs.map((m) => ({
+          ...m,
+          qty: toNum(m.qty),
+          is_void: !!m.is_void,
+        }));
+        version = 3;
+      }
+
+      if (!hasData) {
+        state.doSeqTracker = state.doSeqTracker || {};
+      }
+      return version;
     }
 
     function persistState() {
@@ -4362,47 +4503,65 @@ const INDONESIA_REGIONS = {
 
     // =========================================================================
     // 7. LOGIKA INTI: SIKLUS 30 HARI SEJAK PEMBELIAN PERTAMA PER ITEM
+    //
+    // Jendela dihitung dari transaksi PERTAMA pada siklus berjalan, bukan
+    // dari hari ini. Model ini disebut "siklus 30 hari per item" dan sesuai
+    // dengan label UI yang dipakai aplikasi.
     // =========================================================================
-    function getItemCycleStatus(noKK, itemType, refDateISO = state.simDate) {
-      const cycleDays = Number(state.settings.cycleDays) || 30;
+    function computeItemCycleStatusFromLogs(logsList, noKK, itemType, refDateISO = state.simDate) {
+      const cycleDays = Math.max(1, Number(state.settings.cycleDays) || 30);
       const maxQuota = itemType === 'beras'
         ? (Number(state.settings.maxBerasPerCycle) || 5)
         : (Number(state.settings.maxGasPerCycle) || 5);
       const qtyKey = itemType === 'beras' ? 'qty_beras' : 'qty_gas';
 
-      // Batas awal jendela rolling 30 hari ke belakang dari tanggal referensi
-      const windowStartISO = addDaysISO(refDateISO, -cycleDays);
-
-      // Seluruh transaksi dalam jendela 30 hari terakhir
-      const logsInWindow = state.logs
-        .filter((l) => l.no_kk === noKK && (Number(l[qtyKey]) || 0) > 0 && l.date > windowStartISO && l.date <= refDateISO)
+      const customerLogs = (logsList || [])
+        .filter((l) => l.no_kk === noKK && (Number(l[qtyKey]) || 0) > 0 && l.date <= refDateISO)
         .sort((a, b) => a.date.localeCompare(b.date));
 
-      const usedInWindow = logsInWindow.reduce((sum, l) => sum + (Number(l[qtyKey]) || 0), 0);
-      const remaining = Math.max(0, maxQuota - usedInWindow);
+      let cycleStartISO = null;
+      let usedInWindow = 0;
+      let lastLogInCycle = null;
 
-      if (usedInWindow > 0) {
-        // Transaksi tertua dalam jendela menentukan tanggal pemulihan kuota pertama
-        const oldestLog = logsInWindow[0];
-        const nextCycleDate = addDaysISO(oldestLog.date, cycleDays);
-        const daysLeft = Math.max(1, diffDaysISO(refDateISO, nextCycleDate));
-        const lastValidDateISO = addDaysISO(nextCycleDate, -1);
+      for (const log of customerLogs) {
+        if (!cycleStartISO) {
+          cycleStartISO = log.date;
+          usedInWindow = 0;
+        }
+        const cycleEndISO = addDaysISO(cycleStartISO, cycleDays - 1);
+        if (log.date > cycleEndISO) {
+          cycleStartISO = log.date;
+          usedInWindow = 0;
+        }
+        usedInWindow += Number(log[qtyKey]) || 0;
+        lastLogInCycle = log;
+      }
 
-        const contextualLabel = remaining > 0
-          ? `Nambah lagi ${formatShortDateID(nextCycleDate)}`
-          : `Beli lagi ${formatShortDateID(nextCycleDate)}`;
+      // Hanya aktif jika refDateISO masih di dalam jendela siklus [cycleStartISO .. nextCycleDate - 1]
+      if (cycleStartISO && usedInWindow > 0) {
+        const nextCycleDate = addDaysISO(cycleStartISO, cycleDays);
+        if (refDateISO < nextCycleDate) {
+          const remaining = Math.max(0, maxQuota - usedInWindow);
+          const lastValidDateISO = addDaysISO(nextCycleDate, -1);
+          const daysLeft = Math.max(1, diffDaysISO(refDateISO, nextCycleDate));
 
-        return {
-          hasActiveCycle: true,
-          cycleStartDate: oldestLog.date,
-          lastValidDate: lastValidDateISO,
-          nextCycleDate,
-          used: usedInWindow,
-          max: maxQuota,
-          remaining,
-          daysLeft,
-          contextualLabel,
-        };
+          const contextualLabel = remaining > 0
+            ? `Nambah lagi ${formatShortDateID(nextCycleDate)}`
+            : `Beli lagi ${formatShortDateID(nextCycleDate)}`;
+
+          return {
+            hasActiveCycle: true,
+            cycleStartDate: cycleStartISO,
+            lastValidDate: lastValidDateISO,
+            nextCycleDate,
+            used: usedInWindow,
+            max: maxQuota,
+            remaining,
+            daysLeft,
+            contextualLabel,
+            lastLogDate: lastLogInCycle ? lastLogInCycle.date : null,
+          };
+        }
       }
 
       return {
@@ -4415,7 +4574,12 @@ const INDONESIA_REGIONS = {
         remaining: maxQuota,
         daysLeft: cycleDays,
         contextualLabel: 'Kuota penuh (siap dipakai)',
+        lastLogDate: null,
       };
+    }
+
+    function getItemCycleStatus(noKK, itemType, refDateISO = state.simDate) {
+      return computeItemCycleStatusFromLogs(state.logs, noKK, itemType, refDateISO);
     }
 
     function getCustomerQuotaStats(noKK, refDateISO = state.simDate) {
@@ -4952,6 +5116,9 @@ const INDONESIA_REGIONS = {
         } else if (digitsOnly.length > 0) {
           counterEl.textContent = `${digitsOnly.length} / 16 digit`;
           counterEl.className = 'text-[11px] font-mono font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 shrink-0 whitespace-nowrap';
+        } else {
+          counterEl.textContent = 'Format tidak dikenali';
+          counterEl.className = 'text-[11px] font-semibold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 shrink-0 whitespace-nowrap';
         }
         safeCreateIcons();
       }
@@ -5654,6 +5821,18 @@ const INDONESIA_REGIONS = {
         return;
       }
 
+      // Guard Stok Gudang: cegah pencatatan pengambilan melebihi saldo stok fisik.
+      // Tanpa guard ini, stok gudang bisa minus dan audit barang tidak balance.
+      const stockGuard = getWarehouseStockSummary();
+      if (qBeras > stockGuard.berasStock) {
+        showToast(`Stok Beras gudang tidak cukup (tersedia ${stockGuard.berasStock}, diminta ${qBeras}). Catat penerimaan (GR) terlebih dahulu.`, 'error');
+        return;
+      }
+      if (qGas > stockGuard.gasStock) {
+        showToast(`Stok Gas gudang tidak cukup (tersedia ${stockGuard.gasStock}, diminta ${qGas}). Catat penerimaan (GR) terlebih dahulu.`, 'error');
+        return;
+      }
+
       openConfirmModal(
         'Simpan Pencatatan Kuota?',
         `Konfirmasi pengambilan untuk ${customer.nama}: ${qBeras} Beras dan ${qGas} Gas LPG 3 kg.`,
@@ -5661,22 +5840,19 @@ const INDONESIA_REGIONS = {
           if (isSubmittingRecord) return;
           isSubmittingRecord = true;
 
-          // Guard Concurrency: Verifikasi kesegaran kuota langsung ke server sebelum commit
+          // Guard Concurrency: Verifikasi kesegaran kuota langsung ke server memakai rumus siklus yang identik
           try {
             const { url, key } = getSupabaseConfig();
             if (url && key) {
               const headers = getSupabaseHeaders(key);
-              const thirtyTwoDaysAgo = addDaysISO(txDateStr, -32);
               const timeoutSignal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(6000) : undefined;
-              const freshRes = await fetch(`${url}/rest/v1/logs?no_kk=eq.${customer.no_kk}&date=gte.${thirtyTwoDaysAgo}&select=id,date,qty_beras,qty_gas`, { headers, signal: timeoutSignal });
+              const freshRes = await fetch(`${url}/rest/v1/logs?no_kk=eq.${encodeURIComponent(customer.no_kk)}&date=lte.${encodeURIComponent(txDateStr)}&select=id,date,no_kk,qty_beras,qty_gas`, { headers, signal: timeoutSignal });
               if (freshRes.ok) {
                 const freshLogs = await freshRes.json();
-                const usedB = freshLogs.reduce((s, l) => s + (Number(l.qty_beras) || 0), 0);
-                const usedG = freshLogs.reduce((s, l) => s + (Number(l.qty_gas) || 0), 0);
-                const remB = Math.max(0, state.settings.maxBerasPerCycle - usedB);
-                const remG = Math.max(0, state.settings.maxGasPerCycle - usedG);
+                const freshBeras = computeItemCycleStatusFromLogs(freshLogs, customer.no_kk, 'beras', txDateStr);
+                const freshGas = computeItemCycleStatusFromLogs(freshLogs, customer.no_kk, 'gas', txDateStr);
 
-                if (qBeras > remB || qGas > remG) {
+                if (qBeras > freshBeras.remaining || qGas > freshGas.remaining) {
                   showToast('Transaksi dibatalkan: Kuota telah terambil di perangkat lain (Concurrency Guard)!', 'error');
                   await syncWithSupabase(true);
                   isSubmittingRecord = false;
@@ -5686,6 +5862,15 @@ const INDONESIA_REGIONS = {
             }
           } catch (e) {
             console.warn('Pre-commit server check warning:', e);
+          }
+
+          // Re-validasi stok tepat sebelum commit: cegah dua petugas mencatat
+          // pengambilan bersamaan hingga stok gudang minus.
+          const stockNow = getWarehouseStockSummary();
+          if (qBeras > stockNow.berasStock || qGas > stockNow.gasStock) {
+            showToast('Transaksi dibatalkan: stok gudang berubah dan tidak lagi mencukupi (Stock Guard)!', 'error');
+            isSubmittingRecord = false;
+            return;
           }
 
           if (!state.customers.some((c) => c.no_kk === customer.no_kk)) {
@@ -5871,6 +6056,14 @@ const INDONESIA_REGIONS = {
       const isCurrentlyOpen = !menu.classList.contains('hidden');
       closeAllCustomerActionMenus();
       if (!isCurrentlyOpen) {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const menuHeight = menu.offsetHeight || 128;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const useAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight;
+        menu.style.top = useAbove ? 'auto' : `${rect.bottom + 4}px`;
+        menu.style.bottom = useAbove ? `${window.innerHeight - rect.top + 4}px` : 'auto';
+        menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+        menu.style.left = 'auto';
         menu.classList.remove('hidden');
         safeCreateIcons();
       }
@@ -5904,6 +6097,8 @@ const INDONESIA_REGIONS = {
         closeAllCustomerActionMenus();
       }
     });
+    window.addEventListener('resize', closeAllCustomerActionMenus, { passive: true });
+    window.addEventListener('scroll', closeAllCustomerActionMenus, { passive: true, capture: true });
 
     function renderCustomersTab() {
       const searchVal = (document.getElementById('customer-search-input')?.value || '').trim().toUpperCase();
@@ -6087,7 +6282,7 @@ const INDONESIA_REGIONS = {
                       </button>
                       <div
                         id="cust-action-menu-${c.no_kk}"
-                        class="cust-action-dropdown hidden absolute right-0 z-50 mt-1 w-40 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
+                        class="cust-action-dropdown hidden fixed z-[70] w-40 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
                       >
                         <button
                           type="button"
@@ -6293,6 +6488,25 @@ const INDONESIA_REGIONS = {
         return;
       }
 
+      // Cek duplikat nama (poin 33). Nomor KK boleh beda, tapi nama sama persis
+      // pada wilayah yang sama sering menandakan salah input / data ganda.
+      const normalizeName = (s) => String(s || '').toUpperCase().replace(/[^A-Z ]/g, '').replace(/\s+/g, ' ').trim();
+      const nameKey = normalizeName(nama);
+      const nameClash = state.customers.find(
+        (c) =>
+          normalizeName(c.nama) === nameKey &&
+          normalizeName(c.desa) === normalizeName(desa) &&
+          normalizeName(c.kecamatan) === normalizeName(kecamatan)
+      );
+      if (nameClash) {
+        const proceed = window.confirm(
+          `Nama "${nama}" sudah terdaftar di ${desa}, ${kecamatan} dengan KK berbeda.\n` +
+            `Kemungkinan data ganda atau salah input.\n\nLanjut simpan tetap?`
+        );
+        if (!proceed) return;
+        showToast('Duplikat nama dikonfirmasi oleh petugas. Data tetap disimpan.', 'info');
+      }
+
       const newCust = {
         member_id: generateNextMemberId(no_kk),
         no_kk,
@@ -6319,6 +6533,22 @@ const INDONESIA_REGIONS = {
     let adminInactivityTimer = null;
     const ADMIN_LOCKOUT_MS = 600000;
 
+    function lockAdminSession(reason) {
+      if (!state.isAdminUnlocked) return;
+      state.isAdminUnlocked = false;
+      if (adminInactivityTimer) {
+        clearTimeout(adminInactivityTimer);
+        adminInactivityTimer = null;
+      }
+      updateWarehouseAlertBadges();
+      renderWarehouseTab();
+      document.getElementById('modal-edit-log')?.classList.add('hidden');
+      document.getElementById('modal-add-customer')?.classList.add('hidden');
+      document.getElementById('modal-edit-customer')?.classList.add('hidden');
+      showToast(reason || 'Sesi Supervisor dikunci. Fitur gudang terkunci kembali.', 'info');
+      safeCreateIcons();
+    }
+
     function resetAdminInactivityTimer() {
       if (adminInactivityTimer) {
         clearTimeout(adminInactivityTimer);
@@ -6328,13 +6558,7 @@ const INDONESIA_REGIONS = {
 
       adminInactivityTimer = setTimeout(() => {
         if (state.isAdminUnlocked) {
-          state.isAdminUnlocked = false;
-          updateWarehouseAlertBadges();
-          renderWarehouseTab();
-          document.getElementById('modal-edit-log')?.classList.add('hidden');
-          document.getElementById('modal-add-customer')?.classList.add('hidden');
-          showToast('Sesi Supervisor telah berakhir karena tidak ada aktivitas (10 menit). Fitur dikunci kembali.', 'info');
-          safeCreateIcons();
+          lockAdminSession('Sesi Supervisor telah berakhir karena tidak ada aktivitas (10 menit). Fitur dikunci kembali.');
         }
       }, ADMIN_LOCKOUT_MS);
     }
@@ -6348,6 +6572,24 @@ const INDONESIA_REGIONS = {
         }, { passive: true });
       });
 
+      // Lock instan saat tab disembunyikan / perangkat ditinggal (poin 46).
+      // Timer inaktivitas saja tidak cukup: browser akan menunda setTimeout pada
+      // tab background, sehingga gudang bisa tetap terbuka berjam-jam.
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && state.isAdminUnlocked) {
+          lockAdminSession('Tab ditinggalkan. Akses gudang otomatis terkunci.');
+        }
+      });
+
+      window.addEventListener('pagehide', () => {
+        if (state.isAdminUnlocked) {
+          state.isAdminUnlocked = false;
+          try {
+            sessionStorage.removeItem(AUTH_STORAGE_KEY);
+          } catch (e) {}
+        }
+      });
+
       // Safeguard Keyboard Virtual & Input Angka Mobile: Blokir desimal, minus, plus, dan eksponensial (. , - + e E)
       window.addEventListener('keydown', (e) => {
         const target = e.target;
@@ -6355,6 +6597,35 @@ const INDONESIA_REGIONS = {
           if (['.', ',', '-', '+', 'e', 'E'].includes(e.key)) {
             e.preventDefault();
           }
+        }
+      }, true);
+
+      // Guard Paste: keydown tidak menangkap paste (klik kanan / Ctrl+V), jadi
+      // sanitasi nilai secara eksplisit setelah paste. Tanpa ini simbol bocor
+      // ke input numerik maupun input pencarian KK.
+      window.addEventListener('paste', (e) => {
+        const target = e.target;
+        if (!target || !target.matches) return;
+
+        if (target.matches('input[type="number"], input[inputmode="numeric"]')) {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+          const digits = text.replace(/\D/g, '');
+          const start = target.selectionStart ?? target.value.length;
+          const end = target.selectionEnd ?? target.value.length;
+          target.value = target.value.slice(0, start) + digits + target.value.slice(end);
+          target.dispatchEvent(new Event('input', { bubbles: true }));
+          return;
+        }
+
+        if (target.id === 'record-kk-input' || target.id === 'history-search-input' || target.id === 'customer-search-input') {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+          const sanitized = text.toUpperCase().replace(/[^A-Z0-9 ]/g, '');
+          const start = target.selectionStart ?? target.value.length;
+          const end = target.selectionEnd ?? target.value.length;
+          target.value = target.value.slice(0, start) + sanitized + target.value.slice(end);
+          target.dispatchEvent(new Event('input', { bubbles: true }));
         }
       }, true);
     }
@@ -6373,7 +6644,12 @@ const INDONESIA_REGIONS = {
         : 'Otorisasi Diperlukan. Masukkan PIN Supervisor:';
       const pin = prompt(promptMsg);
       if (!pin) return;
-      if (pin === String(state.settings.adminPin || '1234')) {
+      const configuredPin = String(state.settings?.adminPin || '').trim();
+      if (!configuredPin) {
+        showToast('PIN Supervisor belum diatur. Buka Pengaturan terlebih dahulu.', 'error');
+        return;
+      }
+      if (pin === configuredPin) {
         state.isAdminUnlocked = true;
         resetAdminInactivityTimer();
         cb();
@@ -6417,6 +6693,15 @@ const INDONESIA_REGIONS = {
       const isCurrentlyOpen = !menu.classList.contains('hidden');
       closeAllHistoryActionMenus();
       if (!isCurrentlyOpen) {
+        // position:fixed agar menu tidak terpotong kontainer tabel overflow-x-auto
+        const rect = event.currentTarget.getBoundingClientRect();
+        const menuHeight = menu.offsetHeight || 96;
+        const spaceBelow = window.innerHeight - rect.bottom;
+        const useAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight;
+        menu.style.top = useAbove ? 'auto' : `${rect.bottom + 4}px`;
+        menu.style.bottom = useAbove ? `${window.innerHeight - rect.top + 4}px` : 'auto';
+        menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+        menu.style.left = 'auto';
         menu.classList.remove('hidden');
         safeCreateIcons();
       }
@@ -6450,6 +6735,11 @@ const INDONESIA_REGIONS = {
         closeAllHistoryActionMenus();
       }
     });
+
+    // Menu aksi posisinya position:fixed, jadi harus ditutup saat halaman bergulir
+    // atau ukuran layar berubah agar tidak "melayang" di posisi salah.
+    window.addEventListener('resize', closeAllHistoryActionMenus, { passive: true });
+    window.addEventListener('scroll', closeAllHistoryActionMenus, { passive: true, capture: true });
 
     function renderHistoryTab() {
       const cycleFilter = document.getElementById('history-cycle-filter')?.value || 'all';
@@ -6580,7 +6870,7 @@ const INDONESIA_REGIONS = {
                     </button>
                     <div
                       id="hist-action-menu-${l.id}"
-                      class="hist-action-dropdown hidden absolute right-0 z-50 mt-1 w-44 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
+                      class="hist-action-dropdown hidden fixed z-[70] w-44 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
                     >
                       <button
                         type="button"
@@ -6856,6 +7146,21 @@ const INDONESIA_REGIONS = {
         return;
       }
 
+      // Guard Stok Gudang: cegah revisi naik melebihi stok fisik tersedia
+      const stockNowEdit = getWarehouseStockSummary();
+      const oldBerasEdit = Number(logTarget.qty_beras || 0);
+      const oldGasEdit = Number(logTarget.qty_gas || 0);
+      const availStockBerasEdit = stockNowEdit.berasStock + oldBerasEdit;
+      const availStockGasEdit = stockNowEdit.gasStock + oldGasEdit;
+      if (qBeras > oldBerasEdit && qBeras > availStockBerasEdit) {
+        showToast(`Revisi ditolak: Stok Beras gudang tidak mencukupi (maks. ${Math.max(0, availStockBerasEdit)}, diminta ${qBeras}).`, 'error');
+        return;
+      }
+      if (qGas > oldGasEdit && qGas > availStockGasEdit) {
+        showToast(`Revisi ditolak: Stok Gas gudang tidak mencukupi (maks. ${Math.max(0, availStockGasEdit)}, diminta ${qGas}).`, 'error');
+        return;
+      }
+
       // Tutup modal edit terlebih dahulu agar tidak menumpuk di DOM
       document.getElementById('modal-edit-log')?.classList.add('hidden');
 
@@ -6945,14 +7250,6 @@ const INDONESIA_REGIONS = {
       endDate: '',
     };
 
-    function escapeHtml(str) {
-      return String(str ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
-
     function openExportModal(defaultType = 'logs') {
       const modal = document.getElementById('modal-export-center');
       if (!modal) return;
@@ -7001,8 +7298,7 @@ const INDONESIA_REGIONS = {
 
     function applyExportPeriodPreset(preset, updateUI = true) {
       exportState.currentPreset = preset;
-      const refDateStr = state.simDate || new Date().toISOString().split('T')[0];
-      const refDate = new Date(refDateStr + 'T00:00:00');
+      const refDateStr = state.simDate || todayLocalISO();
 
       let start = '';
       let end = refDateStr;
@@ -7011,19 +7307,14 @@ const INDONESIA_REGIONS = {
         start = refDateStr;
         end = refDateStr;
       } else if (preset === '7days') {
-        const d = new Date(refDate);
-        d.setDate(d.getDate() - 6);
-        start = d.toISOString().split('T')[0];
+        start = addDaysISO(refDateStr, -6);
       } else if (preset === '30days') {
-        const d = new Date(refDate);
-        d.setDate(d.getDate() - 29);
-        start = d.toISOString().split('T')[0];
+        start = addDaysISO(refDateStr, -29);
       } else if (preset === 'thisMonth') {
-        const year = refDate.getFullYear();
-        const month = String(refDate.getMonth() + 1).padStart(2, '0');
-        start = `${year}-${month}-01`;
-        const lastDay = new Date(year, refDate.getMonth() + 1, 0).getDate();
-        end = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+        const [yearStr, monthStr] = refDateStr.split('-');
+        const lastDay = daysInMonthISO(refDateStr);
+        start = `${yearStr}-${monthStr}-01`;
+        end = `${yearStr}-${monthStr}-${String(lastDay).padStart(2, '0')}`;
       } else if (preset === 'all') {
         start = '';
         end = '';
@@ -7307,6 +7598,7 @@ const INDONESIA_REGIONS = {
           }
         });
 
+        const whSummaryExcel = getWarehouseStockSummary();
         kpiBoxesHtml = `
           <tr>
             <td colspan="2" class="kpi-box">
@@ -7323,7 +7615,7 @@ const INDONESIA_REGIONS = {
             </td>
             <td class="kpi-box" style="background-color: #eff6ff; border-color: #bfdbfe;">
               <div class="kpi-title" style="color: #1d4ed8;">SISA STOK SAAT INI</div>
-              <div class="kpi-value" style="color: #1e40af; font-size: 11pt;">B:${state.warehouseStock.beras || 0} | G:${state.warehouseStock.gas || 0}</div>
+              <div class="kpi-value" style="color: #1e40af; font-size: 11pt;">B:${whSummaryExcel.berasStock} | G:${whSummaryExcel.gasStock}</div>
             </td>
           </tr>
         `;
@@ -7368,7 +7660,7 @@ const INDONESIA_REGIONS = {
               GR: +${totalQtyMasukBeras + totalQtyMasukGas} | GI: -${totalQtyKeluarBeras + totalQtyKeluarGas}
             </td>
             <td class="cell-total text-left" style="font-size: 8.5pt; font-weight: normal; color: #475569;">
-              Sisa Saldo Gudang: Beras ${state.warehouseStock.beras || 0} sak, Gas LPG ${state.warehouseStock.gas || 0} tabung
+              Sisa Saldo Gudang: Beras ${whSummaryExcel.berasStock} sak, Gas LPG ${whSummaryExcel.gasStock} tabung
             </td>
           </tr>
         `;
@@ -7484,6 +7776,24 @@ const INDONESIA_REGIONS = {
       closeExportModal();
     }
 
+    // CSV untuk Excel Indonesia: delimiter titik-koma, nomor KK dipaksa teks
+    // agar tidak berubah jadi notasi eksponensial (3.2E+15), BOM UTF-8, anti formula-injection.
+    function buildCSV(headers, rows) {
+      const esc = (v) => {
+        let s = String(v ?? '').trim();
+        const needsText = /^\d{10,}$/.test(s) || /^0\d+$/.test(s);
+        if (needsText) {
+          return `"=""${s}"""`;
+        }
+        if (/^[=+\-@\t\r]/.test(s)) {
+          s = `'${s}`;
+        }
+        return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const line = (arr) => arr.map(esc).join(';');
+      return '\uFEFF' + [line(headers), ...rows.map(line)].join('\r\n');
+    }
+
     function downloadFilteredCSV() {
       const data = getFilteredExportData();
       if (!data || data.length === 0) {
@@ -7497,20 +7807,20 @@ const INDONESIA_REGIONS = {
       if (exportState.dataType === 'logs') {
         filename = `riwayat-kuota-kk-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
         const cycleDays = Number(state.settings.cycleDays) || 30;
-        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK_Tersensor', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo'];
+        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo'];
         const rows = data.map((l, idx) => [
           idx + 1,
           l.id,
           l.date,
           l.time,
-          `"${formatKKMasked(l.no_kk)}"`,
-          sanitizeForCSV(l.nama),
+          String(l.no_kk || '').replace(/\D/g, ''),
+          l.nama || '',
           l.qty_beras,
           l.qty_gas,
           l.total_pcs,
           addDaysISO(l.date, cycleDays),
         ]);
-        csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+        csvContent = buildCSV(headers, rows);
       } else {
         filename = `mutasi-stok-gudang-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
         const headers = ['No', 'ID_Mutasi', 'Tanggal', 'Tipe', 'Komoditas', 'Qty', 'No_DO_Keterangan'];
@@ -7521,9 +7831,9 @@ const INDONESIA_REGIONS = {
           w.type,
           w.item.toUpperCase(),
           w.qty,
-          sanitizeForCSV(w.ref),
+          w.ref || '',
         ]);
-        csvContent = '\uFEFF' + [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+        csvContent = buildCSV(headers, rows);
       }
 
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -7742,6 +8052,7 @@ const INDONESIA_REGIONS = {
           }
         });
 
+        const whSummaryPdf = getWarehouseStockSummary();
         kpiCardsHtml = `
           <div class="kpi-grid">
             <div class="kpi-card">
@@ -7758,7 +8069,7 @@ const INDONESIA_REGIONS = {
             </div>
             <div class="kpi-card blue">
               <div class="kpi-label">SISA STOK GUDANG</div>
-              <div class="kpi-num">B: ${state.warehouseStock.beras || 0} | G: ${state.warehouseStock.gas || 0}</div>
+              <div class="kpi-num">B: ${whSummaryPdf.berasStock} | G: ${whSummaryPdf.gasStock}</div>
             </div>
           </div>
         `;
@@ -7799,7 +8110,7 @@ const INDONESIA_REGIONS = {
           <tr class="tfoot-row">
             <td colspan="5" class="text-right bold" style="padding-right: 10px;">RINGKASAN MUTASI:</td>
             <td class="text-right mono bold" style="font-size: 8pt;">+${totalQtyMasukBeras + totalQtyMasukGas} / -${totalQtyKeluarBeras + totalQtyKeluarGas}</td>
-            <td style="font-size: 8pt; color: #475569;">Sisa Gudang: Beras ${state.warehouseStock.beras || 0} sak, Gas LPG ${state.warehouseStock.gas || 0} tabung</td>
+            <td style="font-size: 8pt; color: #475569;">Sisa Gudang: Beras ${whSummaryPdf.berasStock} sak, Gas LPG ${whSummaryPdf.gasStock} tabung</td>
           </tr>
         `;
       }
@@ -8003,11 +8314,23 @@ const INDONESIA_REGIONS = {
 
       showToast('Membuka dialog cetak dokumen / Simpan ke PDF...', 'info');
 
+      // Laporan dicetak lewat iframe terpisah. Mode cetak pada dokumen induk
+      // dipakai untuk membungkam UI di belakang, lalu selalu dibersihkan.
+      document.body.classList.add('print-report-mode');
       setTimeout(() => {
         printIframe.contentWindow.focus();
         printIframe.contentWindow.print();
         closeExportModal();
       }, 400);
+    }
+
+    // Bersihkan mode cetak setiap kali dialog print selesai / dibatalkan.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('afterprint', () => {
+        document.body.classList.remove('print-report-mode');
+        const frame = document.getElementById('report-print-iframe');
+        if (frame) frame.remove();
+      });
     }
 
     function exportHistoryCSV() {
@@ -8033,7 +8356,11 @@ const INDONESIA_REGIONS = {
         return;
       }
 
-      const configuredPin = String(state.settings?.adminPin || '1234').trim();
+      const configuredPin = String(state.settings?.adminPin || '').trim();
+      if (!configuredPin) {
+        showToast('PIN gudang belum diatur. Atur PIN di menu Pengaturan.', 'error');
+        return;
+      }
       const pinLength = configuredPin.length || 4;
 
       if (el.value.length >= pinLength) {
@@ -8255,7 +8582,13 @@ const INDONESIA_REGIONS = {
 
       const filteredWh = state.warehouseLogs.filter((m) => {
         if (m.is_void || Number(m.qty) <= 0) return false;
-        if (filterType !== 'all' && m.type !== filterType) return false;
+        if (filterType !== 'all') {
+          if (filterType === 'GI-PELANGGAN') {
+            if (m.type !== 'GI-PELANGGAN' && m.type !== 'GI-WARGA') return false;
+          } else if (m.type !== filterType) {
+            return false;
+          }
+        }
         if (filterItem !== 'all' && m.item !== filterItem) return false;
         return true;
       });
@@ -8489,7 +8822,7 @@ const INDONESIA_REGIONS = {
 
     function confirmDeleteWarehouseMutation(whId) {
       const target = state.warehouseLogs.find((w) => w.id === whId);
-      if (!target || target.type === 'GI-WARGA') return;
+      if (!target || target.type === 'GI-WARGA' || target.type === 'GI-PELANGGAN') return;
 
       if (target.type === 'GR') {
         const summary = getWarehouseStockSummary();
@@ -8999,7 +9332,6 @@ const INDONESIA_REGIONS = {
       if (histSearchInput) {
         histSearchInput.value = kk.slice(-4);
       }
-      state.history.searchQuery = kk.slice(-4);
       renderHistoryTab();
     }
 
@@ -9464,9 +9796,19 @@ const INDONESIA_REGIONS = {
       downloadCardPNG('front');
     }
 
+    function focusManualKKLookupFromScanner() {
+      closeScannerModal();
+      const inputEl = document.getElementById('record-kk-input');
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
     function openScannerModal() {
       document.getElementById('modal-qr-scanner').classList.remove('hidden');
-      document.getElementById('qr-scanner-fallback-msg').classList.add('hidden');
+      const fallbackEl = document.getElementById('qr-scanner-fallback-msg');
+      if (fallbackEl) fallbackEl.classList.add('hidden');
 
       const demoBtnsEl = document.getElementById('scanner-demo-buttons');
       if (demoBtnsEl) {
@@ -9494,6 +9836,39 @@ const INDONESIA_REGIONS = {
         }
       }
 
+      const showCameraFallback = (title, detail) => {
+        if (!fallbackEl) return;
+        fallbackEl.innerHTML = `
+          <i data-lucide="camera-off" class="w-7 h-7 text-amber-400 mx-auto"></i>
+          <p class="text-xs font-bold text-white">${escapeHtml(title)}</p>
+          <p class="text-[11px] text-slate-300 leading-relaxed max-w-xs mx-auto">${escapeHtml(detail)}</p>
+          <button
+            type="button"
+            onclick="focusManualKKLookupFromScanner()"
+            class="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition cursor-pointer"
+          >
+            <i data-lucide="keyboard" class="w-3.5 h-3.5"></i>
+            <span>Ketik No. KK / Nama Manual</span>
+          </button>
+        `;
+        fallbackEl.classList.remove('hidden');
+        safeCreateIcons();
+      };
+
+      const isFileProtocol = window.location.protocol === 'file:';
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      const isSecureContextReady = window.isSecureContext || isLocalhost;
+
+      if (isFileProtocol || !isSecureContextReady || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showCameraFallback(
+          isFileProtocol ? 'Kamera Diblokir pada Mode File Lokal (file://)' : 'Akses Kamera Membutuhkan Koneksi Aman (HTTPS)',
+          isFileProtocol
+            ? 'Browser memblokir akses kamera jika file HTML dibuka langsung dari folder. Jalankan via server HTTPS/localhost atau ketik No. KK / Nama secara manual.'
+            : 'Izin kamera tidak tersedia pada konteks halaman ini. Silakan gunakan tombol input manual di bawah.'
+        );
+        return;
+      }
+
       safeCreateIcons();
 
       try {
@@ -9506,14 +9881,15 @@ const INDONESIA_REGIONS = {
               (decodedText) => onScanSuccess(decodedText),
               () => {}
             )
-            .catch(() => {
-              document.getElementById('qr-scanner-fallback-msg').classList.remove('hidden');
+            .catch((err) => {
+              const errMsg = (err && err.message) ? err.message : 'Izin kamera ditolak atau perangkat kamera tidak ditemukan.';
+              showCameraFallback('Kamera Tidak Dapat Diakses', `${errMsg} Gunakan input manual untuk melanjutkan.`);
             });
         } else {
-          document.getElementById('qr-scanner-fallback-msg').classList.remove('hidden');
+          showCameraFallback('Pustaka Scanner Belum Siap', 'Library pemindai QR belum termuat. Gunakan input manual No. KK atau Nama.');
         }
       } catch (e) {
-        document.getElementById('qr-scanner-fallback-msg').classList.remove('hidden');
+        showCameraFallback('Gagal Menginisialisasi Kamera', 'Terjadi kendala saat membuka kamera. Silakan gunakan input manual.');
       }
     }
 
@@ -9589,7 +9965,7 @@ const INDONESIA_REGIONS = {
       document.getElementById('set-max-beras').value = state.settings.maxBerasPerCycle;
       document.getElementById('set-max-gas').value = state.settings.maxGasPerCycle;
       document.getElementById('set-cycle-days').value = state.settings.cycleDays;
-      document.getElementById('set-admin-pin').value = state.settings.adminPin || '1234';
+      document.getElementById('set-admin-pin').value = state.settings.adminPin || '';
       document.getElementById('set-low-stock').value = state.settings.lowStockThreshold || 20;
 
       const urlEl = document.getElementById('set-supabase-url');
@@ -9688,7 +10064,7 @@ const INDONESIA_REGIONS = {
           state.settings = { ...DEFAULT_SETTINGS };
           state.simDate = BASE_TODAY_DATE;
           document.getElementById('sim-date-input').value = BASE_TODAY_DATE;
-          createDemoData();
+          createDemoData({ force: true });
           clearActiveKK();
           populateSettingsForm();
           refreshAllUI();
@@ -9801,12 +10177,12 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     // 17B. SUPABASE CLOUD SYNC ENGINE (HYBRID OFFLINE + REALTIME REST SYNC)
     // =========================================================================
-    const DEFAULT_SUPABASE_URL = 'https://jziahfqjawqivesknkms.supabase.co';
-    const DEFAULT_SUPABASE_KEY = 'sb_publishable_xglnlPm893o1r_Q1fXgaNA_MoS7GL11';
+    const DEFAULT_SUPABASE_URL = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseUrl) || '';
+    const DEFAULT_SUPABASE_KEY = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || '';
 
     let isSyncing = false;
     let isSubmittingRecord = false;
-    let cloudStatus = 'connected'; // 'connected' | 'syncing' | 'offline'
+    let cloudStatus = 'offline'; // 'connected' | 'syncing' | 'offline'
 
     function getSupabaseConfig() {
       const url = (document.getElementById('set-supabase-url')?.value || state.settings.supabaseUrl || DEFAULT_SUPABASE_URL).trim().replace(/\/+$/, '');
@@ -9870,7 +10246,7 @@ const INDONESIA_REGIONS = {
         } else {
           if (badgeHeader) {
             badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100 shadow-2xs shrink-0 cursor-pointer';
-            badgeHeader.title = 'Data tersinkron sempurna dengan cloud. Klik untuk sinkronkan manual.';
+            badgeHeader.title = 'Data tersinkron dengan cloud. Klik untuk sinkronkan manual.';
             badgeHeader.innerHTML = `
               <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.8"/>
@@ -10700,14 +11076,17 @@ const INDONESIA_REGIONS = {
       pushSingleCustomerToSupabase(cust);
       showToast(`Data KK ${cust.nama} berhasil diperbarui!`, 'success');
     }
-function bootstrapApp() {
+    function bootstrapApp() {
       loadState();
       checkAuthGate();
+
+      // Status cloud awal harus jujur: offline/lokal sampai sinkron pertama sukses.
+      updateCloudStatusUI('offline', 'Belum tersinkron. Menunggu koneksi cloud.');
       const simInput = document.getElementById('sim-date-input');
       if (simInput) simInput.value = state.simDate;
       const txDateInput = document.getElementById('record-tx-date');
       if (txDateInput && !txDateInput.value) {
-        txDateInput.value = new Date().toLocaleDateString('en-CA');
+        txDateInput.value = BASE_TODAY_DATE;
       }
       refreshAllUI();
       safeCreateIcons();
