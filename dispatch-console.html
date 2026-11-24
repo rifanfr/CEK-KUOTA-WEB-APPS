@@ -9072,6 +9072,60 @@ const INDONESIA_REGIONS = {
     let failedWhPinAttempts = 0;
     let whPinLockoutUntil = 0;
 
+    function isSha256Hex(val) {
+      return typeof val === 'string' && /^[a-f0-9]{64}$/i.test(val.trim());
+    }
+
+    function fallbackSha256Hex(str) {
+      // Fallback deterministik 256-bit untuk lingkungan non-WebCrypto (menggabungkan 4 blok 64-bit)
+      const s = String(str ?? '');
+      const mix = (seed) => {
+        let h1 = 0xdeadbeef ^ seed;
+        let h2 = 0x41c6ce57 ^ seed;
+        for (let i = 0; i < s.length; i++) {
+          const ch = s.charCodeAt(i);
+          h1 = Math.imul(h1 ^ ch, 2654435761);
+          h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        return ((h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0'));
+      };
+      return [0x1111, 0x2222, 0x3333, 0x4444].map(mix).join('');
+    }
+
+    async function hashPinSHA256(pin) {
+      const clean = String(pin ?? '').trim();
+      try {
+        if (typeof crypto !== 'undefined' && crypto.subtle && typeof crypto.subtle.digest === 'function') {
+          const enc = new TextEncoder().encode(clean);
+          const digest = await crypto.subtle.digest('SHA-256', enc);
+          const bytes = new Uint8Array(digest);
+          return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+        }
+      } catch (e) {
+        // Jatuh ke fallback deterministik jika crypto.subtle tidak tersedia
+      }
+      return fallbackSha256Hex(clean);
+    }
+
+    async function verifyPinAgainstStored(inputPin, storedPin) {
+      const cleanInput = String(inputPin ?? '').trim();
+      const cleanStored = String(storedPin ?? '').trim();
+      if (!cleanInput || !cleanStored) return { ok: false, needsMigration: false };
+
+      if (isSha256Hex(cleanStored)) {
+        const inputHash = await hashPinSHA256(cleanInput);
+        return { ok: inputHash.toLowerCase() === cleanStored.toLowerCase(), needsMigration: false };
+      }
+
+      // Kompatibilitas PIN plain lama: jika cocok, tandai untuk dimigrasi ke hash SHA-256
+      if (cleanInput === cleanStored) {
+        return { ok: true, needsMigration: true };
+      }
+      return { ok: false, needsMigration: false };
+    }
+
     function handlePinInput(el) {
       if (!el) return;
       el.value = el.value.replace(/\D/g, '');
@@ -9090,38 +9144,51 @@ const INDONESIA_REGIONS = {
         showToast('PIN gudang belum diatur. Atur PIN di menu Pengaturan.', 'error');
         return;
       }
-      const pinLength = configuredPin.length || 4;
+      const expectedLength = isSha256Hex(configuredPin) ? 4 : (configuredPin.length || 4);
 
-      if (el.value.length >= pinLength) {
-        if (el.value === configuredPin) {
-          failedWhPinAttempts = 0;
-          whPinLockoutUntil = 0;
-          state.isAdminUnlocked = true;
-          resetAdminInactivityTimer();
-          el.value = '';
-          updateWarehouseAlertBadges();
-          renderWarehouseTab();
-          showToast('Akses Stok Gudang dibuka.', 'success');
-        } else {
-          failedWhPinAttempts = (failedWhPinAttempts || 0) + 1;
-          const gate = document.getElementById('warehouse-pin-gate');
-          if (gate) {
-            gate.classList.add('animate-shake');
-            setTimeout(() => gate.classList.remove('animate-shake'), 600);
-          }
-          if (errEl) {
-            errEl.textContent = 'PIN Salah! Coba lagi.';
-            errEl.classList.remove('hidden');
-          }
-          if (failedWhPinAttempts >= 5) {
-            whPinLockoutUntil = Date.now() + 30000;
+      if (el.value.length >= expectedLength) {
+        const candidatePin = el.value;
+        verifyPinAgainstStored(candidatePin, configuredPin).then((res) => {
+          if (res.ok) {
             failedWhPinAttempts = 0;
-            showToast('PIN salah 5x. Terkunci 30 detik demi keamanan.', 'error');
+            whPinLockoutUntil = 0;
+            state.isAdminUnlocked = true;
+            resetAdminInactivityTimer();
+            if (el) el.value = '';
+
+            if (res.needsMigration) {
+              hashPinSHA256(candidatePin).then((hex) => {
+                if (state.settings) {
+                  state.settings.adminPin = hex;
+                  if (typeof persistState === 'function') persistState();
+                }
+              });
+            }
+
+            updateWarehouseAlertBadges();
+            renderWarehouseTab();
+            showToast('Akses Stok Gudang dibuka.', 'success');
           } else {
-            showToast('PIN tidak sesuai (' + failedWhPinAttempts + '/5). Silakan coba lagi.', 'error');
+            failedWhPinAttempts = (failedWhPinAttempts || 0) + 1;
+            const gate = document.getElementById('warehouse-pin-gate');
+            if (gate) {
+              gate.classList.add('animate-shake');
+              setTimeout(() => gate.classList.remove('animate-shake'), 600);
+            }
+            if (errEl) {
+              errEl.textContent = 'PIN Salah! Coba lagi.';
+              errEl.classList.remove('hidden');
+            }
+            if (failedWhPinAttempts >= 5) {
+              whPinLockoutUntil = Date.now() + 30000;
+              failedWhPinAttempts = 0;
+              showToast('PIN salah 5x. Terkunci 30 detik demi keamanan.', 'error');
+            } else {
+              showToast('PIN tidak sesuai (' + failedWhPinAttempts + '/5). Silakan coba lagi.', 'error');
+            }
+            setTimeout(() => { if (el) el.value = ''; }, 300);
           }
-          setTimeout(() => { if (el) el.value = ''; }, 300);
-        }
+        });
       }
     }
 
@@ -10901,7 +10968,12 @@ const INDONESIA_REGIONS = {
       document.getElementById('set-max-beras').value = state.settings.maxBerasPerCycle;
       document.getElementById('set-max-gas').value = state.settings.maxGasPerCycle;
       document.getElementById('set-cycle-days').value = state.settings.cycleDays;
-      document.getElementById('set-admin-pin').value = state.settings.adminPin || '';
+      // Jangan pernah menaruh PIN/hash lama ke nilai input agar tidak terbaca di DOM/DevTools
+      const pinInput = document.getElementById('set-admin-pin');
+      if (pinInput) {
+        pinInput.value = '';
+        pinInput.placeholder = state.settings.adminPin ? 'Kosongkan jika PIN tetap' : 'Buat PIN (min. 4 digit)';
+      }
       document.getElementById('set-low-stock').value = state.settings.lowStockThreshold || 20;
 
       const urlEl = document.getElementById('set-supabase-url');
@@ -10956,23 +11028,51 @@ const INDONESIA_REGIONS = {
       }
     }
 
-    function saveSettings(e) {
-      e.preventDefault();
+    async function saveSettings(e) {
+      if (e && e.preventDefault) e.preventDefault();
       const appTitle = document.getElementById('set-app-title').value.trim().toUpperCase();
       const maxBeras = parseInt(document.getElementById('set-max-beras').value, 10);
       const maxGas = parseInt(document.getElementById('set-max-gas').value, 10);
       const cycleDays = parseInt(document.getElementById('set-cycle-days').value, 10);
-      const adminPin = document.getElementById('set-admin-pin').value.trim();
+      const newPinInput = document.getElementById('set-admin-pin').value.trim();
       const lowStockThreshold = parseInt(document.getElementById('set-low-stock').value, 10);
       const defaultProv = document.getElementById('set-default-prov').value;
       const defaultKab = document.getElementById('set-default-kab').value;
       const supabaseUrl = (document.getElementById('set-supabase-url')?.value || state.settings.supabaseUrl || DEFAULT_SUPABASE_URL).trim();
       const supabaseKey = (document.getElementById('set-supabase-key')?.value || state.settings.supabaseKey || DEFAULT_SUPABASE_KEY).trim();
 
-      if (!appTitle || maxBeras < 1 || maxGas < 1 || cycleDays < 1 || adminPin.length < 4 || lowStockThreshold < 1) {
-        showToast('Periksa kembali isian pengaturan (PIN minimal 4 digit).', 'error');
+      const existingPin = String(state.settings?.adminPin || '').trim();
+      const hasExistingPin = existingPin.length > 0;
+
+      if (!appTitle || maxBeras < 1 || maxGas < 1 || cycleDays < 1 || lowStockThreshold < 1) {
+        showToast('Periksa kembali isian pengaturan (kuota, siklus, dan batas stok minimal 1).', 'error');
         return;
       }
+
+      if (!hasExistingPin && newPinInput.length < 4) {
+        showToast('PIN Admin wajib dibuat minimal 4 digit angka.', 'error');
+        return;
+      }
+
+      if (newPinInput.length > 0 && newPinInput.length < 4) {
+        showToast('PIN Admin baru minimal 4 digit angka.', 'error');
+        return;
+      }
+
+      if (hasExistingPin) {
+        const currentPinCheck = typeof prompt === 'function'
+          ? prompt('Masukkan PIN Admin saat ini untuk menyimpan perubahan pengaturan:')
+          : '';
+        const authRes = await verifyPinAgainstStored(currentPinCheck, existingPin);
+        if (!authRes.ok) {
+          showToast('Verifikasi PIN Admin gagal. Perubahan pengaturan dibatalkan.', 'error');
+          return;
+        }
+      }
+
+      const finalAdminPinHash = newPinInput.length >= 4
+        ? await hashPinSHA256(newPinInput)
+        : (isSha256Hex(existingPin) ? existingPin : await hashPinSHA256(existingPin));
 
       state.settings = {
         appTitle,
@@ -10981,11 +11081,14 @@ const INDONESIA_REGIONS = {
         cycleDays,
         defaultProv,
         defaultKab,
-        adminPin,
+        adminPin: finalAdminPinHash,
         lowStockThreshold,
         supabaseUrl,
         supabaseKey,
       };
+      const pinEl = document.getElementById('set-admin-pin');
+      if (pinEl) pinEl.value = '';
+
       persistState();
       refreshAllUI();
       showToast('Konfigurasi gerai, siklus & stok gudang berhasil disimpan.', 'success');
@@ -12856,6 +12959,20 @@ const INDONESIA_REGIONS = {
       const rt = (document.getElementById('edit-reg-rt')?.value || '').trim();
       const rw = (document.getElementById('edit-reg-rw')?.value || '').trim();
       const detail = document.getElementById('edit-reg-detail').value.trim().toUpperCase();
+
+      if (typeof findDuplicateNameCustomer === 'function') {
+        const nameClashEdit = findDuplicateNameCustomer(nama, desa, kecamatan, rawKK);
+        if (nameClashEdit) {
+          const proceedEdit = typeof confirm === 'function'
+            ? confirm(
+                `Nama "${nama}" sudah terdaftar di ${desa}, ${kecamatan} dengan KK berbeda.\n` +
+                  `Kemungkinan data ganda atau salah input.\n\nLanjut simpan perubahan tetap?`
+              )
+            : false;
+          if (!proceedEdit) return;
+          showToast('Duplikat nama dikonfirmasi oleh petugas. Perubahan tetap dilanjutkan.', 'info');
+        }
+      }
 
       cust.nama = nama;
       cust.no_hp = no_hp;
