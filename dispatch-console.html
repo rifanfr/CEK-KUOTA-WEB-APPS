@@ -580,6 +580,9 @@
 
           <!-- Kontrol Kanan: Sync Cloud, Tanggal Simulasi -->
           <div id="header-controls-wrap" class="flex flex-wrap items-center gap-2 ml-auto sm:ml-0">
+            <!-- Kontrol Autentikasi Petugas Supabase Auth (Phase-3) -->
+            <div id="header-auth-control" class="flex items-center shrink-0"></div>
+
             <!-- Tombol OneDrive Sync di Header -->
             <button
               type="button"
@@ -1726,6 +1729,83 @@
   <!-- ===================================================================== -->
   <!-- ===================================================================== -->
   <!-- ===================================================================== -->
+  <!-- ===================================================================== -->
+  <!-- MODAL AUTENTIKASI PETUGAS SUPABASE AUTH (PHASE-3 SECURE INTEGRATION)  -->
+  <!-- ===================================================================== -->
+  <div
+    id="modal-auth-login"
+    class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modal-auth-login-title"
+  >
+    <div class="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-sm w-full p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-700 flex items-center justify-center shrink-0">
+            <i data-lucide="shield-check" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 id="modal-auth-login-title" class="text-sm font-extrabold text-slate-900 tracking-tight">Login Petugas</h3>
+            <p class="text-xs text-slate-500">Supabase Auth Session</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onclick="closeLoginModal()"
+          class="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl transition cursor-pointer"
+          title="Tutup Modal"
+        >
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+
+      <form id="auth-login-form" onsubmit="handleAuthLoginSubmit(event)" class="space-y-3.5">
+        <div class="space-y-1">
+          <label for="auth-email-input" class="block text-xs font-bold text-slate-700">Email Petugas</label>
+          <input
+            type="email"
+            id="auth-email-input"
+            required
+            autocomplete="username"
+            placeholder="petugas@organisasi.id"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-password-input" class="block text-xs font-bold text-slate-700">Kata Sandi</label>
+          <input
+            type="password"
+            id="auth-password-input"
+            required
+            autocomplete="current-password"
+            placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div class="flex items-center justify-between text-xs">
+          <label class="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
+            <input type="checkbox" id="auth-remember-me" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
+            <span>Ingat saya di perangkat ini</span>
+          </label>
+        </div>
+
+        <div id="auth-login-error" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
+
+        <button
+          type="submit"
+          id="auth-login-submit-btn"
+          class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+        >
+          <i data-lucide="log-in" class="w-4 h-4"></i>
+          <span>Masuk ke Sistem</span>
+        </button>
+      </form>
+    </div>
+  </div>
+
   <!-- MODAL 1: KARTU QR MEMBER AMAN (OPSI 3: INDIGO MODERN & AKSEN KORAL)     -->
   <!-- ===================================================================== -->
   <div id="modal-qr-card" class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-3 sm:p-5">
@@ -3694,6 +3774,13 @@ const INDONESIA_REGIONS = {
       return `"${str}"`;
     }
 
+    function generateRequestId() {
+      if (typeof window !== 'undefined' && window.crypto && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+      }
+      return 'req-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+    }
+
     function generateSecureTxId(prefix = 'LOG') {
       if (window.crypto && typeof crypto.randomUUID === 'function') {
         return `${prefix}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -3719,6 +3806,8 @@ const INDONESIA_REGIONS = {
       DO_SEQ: 'catat_kuota_kk_doseq_prod_v2',
       SCHEMA_VERSION: 'catat_kuota_kk_schema_version',
       SYNC_REV: 'catat_kuota_kk_sync_rev_v2',
+      OUTBOX: 'catat_kuota_kk_outbox_prod_v2',
+      DEAD_LETTER: 'catat_kuota_kk_dead_letter_prod_v2',
     };
 
     const TAB_INSTANCE_ID = (typeof window !== 'undefined' && window.crypto && typeof crypto.randomUUID === 'function')
@@ -4369,9 +4458,9 @@ const INDONESIA_REGIONS = {
         },
       ];
 
-      state.customers = demoCustomers;
-      state.logs = demoLogs;
-      state.warehouseLogs = demoWarehouseLogs;
+      state.customers = demoCustomers.map((c) => ({ ...c, sync_status: 'LEGACY_LOCAL_REVIEW_REQUIRED', is_dirty: false }));
+      state.logs = demoLogs.map((l) => ({ ...l, sync_status: 'LEGACY_LOCAL_REVIEW_REQUIRED', is_dirty: false }));
+      state.warehouseLogs = demoWarehouseLogs.map((w) => ({ ...w, sync_status: 'LEGACY_LOCAL_REVIEW_REQUIRED', is_dirty: false }));
       persistState();
       return true;
     }
@@ -4410,6 +4499,187 @@ const INDONESIA_REGIONS = {
       }
     }
 
+    
+    // =========================================================================
+    // 2B. OUTBOX MANAGER (PERSISTENT CLIENT-SIDE TRANSACTION OUTBOX)
+    // =========================================================================
+    const OutboxManager = window.OutboxManager = {
+      getEntries() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.OUTBOX);
+          return raw ? JSON.parse(raw) : [];
+        } catch (e) {
+          return [];
+        }
+      },
+      saveEntries(entries) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.OUTBOX, JSON.stringify(entries));
+        } catch (e) {
+          console.warn('Gagal menyimpan outbox:', e);
+        }
+      },
+      getDeadLetterEntries() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.DEAD_LETTER);
+          return raw ? JSON.parse(raw) : [];
+        } catch (e) {
+          return [];
+        }
+      },
+      saveDeadLetterEntries(entries) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.DEAD_LETTER, JSON.stringify(entries));
+        } catch (e) {
+          console.warn('Gagal menyimpan dead-letter:', e);
+        }
+      },
+      add(type, requestId, payload, metadata = {}) {
+        const entries = this.getEntries();
+        const existing = entries.find((e) => e.requestId === requestId);
+        if (existing) {
+          return existing;
+        }
+        const newEntry = {
+          id: requestId,
+          requestId,
+          type,
+          payload,
+          metadata,
+          createdAt: new Date().toISOString(),
+          retryCount: 0,
+          lastError: null,
+          status: 'pending',
+        };
+        entries.push(newEntry);
+        this.saveEntries(entries);
+        return newEntry;
+      },
+      get(requestId) {
+        return this.getEntries().find((e) => e.requestId === requestId);
+      },
+      remove(requestId) {
+        const entries = this.getEntries().filter((e) => e.requestId !== requestId);
+        this.saveEntries(entries);
+      },
+      markInFlight(requestId) {
+        const entries = this.getEntries();
+        const entry = entries.find((e) => e.requestId === requestId);
+        if (entry) {
+          entry.status = 'in_flight';
+          entry.lastAttemptAt = new Date().toISOString();
+          this.saveEntries(entries);
+        }
+      },
+      markFailed(requestId, error, isTerminal = false) {
+        const entries = this.getEntries();
+        const entryIdx = entries.findIndex((e) => e.requestId === requestId);
+        if (entryIdx === -1) return;
+
+        const entry = entries[entryIdx];
+        const errorDetail = {
+          message: error ? error.message : 'Unknown error',
+          code: error ? (error.code || null) : null,
+          status: error ? (error.status || null) : null,
+          time: new Date().toISOString(),
+        };
+
+        if (isTerminal) {
+          entry.status = 'failed_terminal';
+          entry.lastError = errorDetail;
+          entry.movedToDeadLetterAt = new Date().toISOString();
+
+          const deadLetters = this.getDeadLetterEntries();
+          const existingDlIdx = deadLetters.findIndex((d) => d.requestId === requestId);
+          if (existingDlIdx >= 0) {
+            deadLetters[existingDlIdx] = entry;
+          } else {
+            deadLetters.push(entry);
+          }
+          this.saveDeadLetterEntries(deadLetters);
+
+          // Keluarkan item terminal dari antrean aktif outbox
+          entries.splice(entryIdx, 1);
+          this.saveEntries(entries);
+        } else {
+          entry.status = 'pending';
+          entry.retryCount = (entry.retryCount || 0) + 1;
+          entry.lastError = errorDetail;
+          this.saveEntries(entries);
+        }
+      },
+    };
+
+    // =========================================================================
+    // 2C. KLASIFIKASI ERROR TERMINAL VS RETRYABLE UNTUK RPC & OUTBOX
+    // =========================================================================
+    const TERMINAL_SQLSTATES = [
+      'P0001', 'P0002', 'P0003', 'P0004', 'P0005',
+      'P0006', 'P0007', 'P0008', 'P0009', 'P0010',
+      'P0013', 'P0014', '42501'
+    ];
+    const TERMINAL_HTTP_STATUSES = [400, 401, 403, 404, 409];
+    const RETRYABLE_HTTP_STATUSES = [408, 429, 500, 502, 503, 504];
+
+    function isRetryableRpcError(error) {
+      if (!error) return false;
+      const statusNum = Number(error.status) || (Number(error.code) ? Number(error.code) : null);
+      const codeStr = String(error.code || '').trim();
+      const msg = String(error.message || '');
+
+      // 1. Timeout / Abort / ETIMEDOUT
+      if (
+        error.name === 'AbortError' ||
+        codeStr === 'ETIMEDOUT' ||
+        /etimedout/i.test(msg) ||
+        /timeout/i.test(msg) ||
+        /waktu habis/i.test(msg)
+      ) {
+        return true;
+      }
+
+      // 2. Gangguan jaringan (fetch failure, offline, connection refused, DNS error)
+      if (
+        (error.name === 'TypeError' && /fetch/i.test(msg)) ||
+        /failed to fetch/i.test(msg) ||
+        /networkerror/i.test(msg) ||
+        /network error/i.test(msg) ||
+        /jaringan/i.test(msg) ||
+        /koneksi/i.test(msg) ||
+        /offline/i.test(msg) ||
+        (!error.status && !error.code)
+      ) {
+        return true;
+      }
+
+      // 3. HTTP status retryable
+      if (statusNum && RETRYABLE_HTTP_STATUSES.includes(statusNum)) {
+        return true;
+      }
+
+      return false;
+    }
+
+    function isTerminalRpcError(error) {
+      if (!error) return false;
+      const codeStr = String(error.code || '').trim().toUpperCase();
+      const statusNum = Number(error.status) || (Number(error.code) ? Number(error.code) : null);
+
+      if (TERMINAL_SQLSTATES.includes(codeStr)) {
+        return true;
+      }
+
+      if (statusNum && TERMINAL_HTTP_STATUSES.includes(statusNum)) {
+        return true;
+      }
+
+      if (isRetryableRpcError(error)) {
+        return false;
+      }
+
+      return true;
+    }
+
     function loadState() {
       const isPlainObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
       const isArr = (v) => Array.isArray(v);
@@ -4426,17 +4696,44 @@ const INDONESIA_REGIONS = {
       if (resSettings.corrupted) corruptedKeys.push('Pengaturan');
       else if (resSettings.value) state.settings = { ...DEFAULT_SETTINGS, ...resSettings.value };
 
+      const activeOutboxRequestIds = new Set(
+        ((typeof OutboxManager !== 'undefined' && OutboxManager.getEntries) ? OutboxManager.getEntries() : [])
+          .map((e) => e.requestId)
+      );
+      const DEMO_KKS = new Set(['3201011508850001', '3201012204900002', '3201010811780003', '3201016007920004']);
+
       const resCustomers = safeReadStorageJSON(STORAGE_KEYS.CUSTOMERS, [], isArr);
       if (resCustomers.corrupted) corruptedKeys.push('Data KK');
-      state.customers = resCustomers.value;
+      state.customers = (resCustomers.value || []).map((c) => {
+        const isDemo = DEMO_KKS.has(c.no_kk) || (typeof c.member_id === 'string' && c.member_id.startsWith('KK-REG-0000'));
+        if (isDemo || (!c.registration_request_id && !activeOutboxRequestIds.has(c.registration_request_id))) {
+          if (!c.sync_status) c.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+          if (c.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') c.is_dirty = false;
+        }
+        return c;
+      });
 
       const resLogs = safeReadStorageJSON(STORAGE_KEYS.LOGS, [], isArr);
       if (resLogs.corrupted) corruptedKeys.push('Riwayat Pengambilan');
-      state.logs = resLogs.value;
+      state.logs = (resLogs.value || []).map((l) => {
+        const isDemo = (typeof l.id === 'string' && l.id.startsWith('LOG-100')) || DEMO_KKS.has(l.no_kk);
+        if (isDemo || (!l.request_id && !activeOutboxRequestIds.has(l.request_id))) {
+          if (!l.sync_status) l.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+          if (l.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') l.is_dirty = false;
+        }
+        return l;
+      });
 
       const resWarehouse = safeReadStorageJSON(STORAGE_KEYS.WAREHOUSE, [], isArr);
       if (resWarehouse.corrupted) corruptedKeys.push('Log Gudang');
-      state.warehouseLogs = resWarehouse.value;
+      state.warehouseLogs = (resWarehouse.value || []).map((w) => {
+        const isDemo = typeof w.id === 'string' && (w.id.startsWith('WH-GR-00') || w.id.startsWith('WH-GI-100'));
+        if (isDemo || (!w.request_id && !activeOutboxRequestIds.has(w.request_id))) {
+          if (!w.sync_status) w.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+          if (w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') w.is_dirty = false;
+        }
+        return w;
+      });
 
       const resDOSeq = safeReadStorageJSON(STORAGE_KEYS.DO_SEQ, {}, isPlainObj);
       if (resDOSeq.corrupted) corruptedKeys.push('Urutan DO');
@@ -5495,6 +5792,11 @@ const INDONESIA_REGIONS = {
       const kk = state.record.kkInput;
       const isCompleteKK = kk.length === 16;
       const existingCustomer = isCompleteKK ? state.customers.find((c) => c.no_kk === kk) : null;
+      const pendingOutboxCust = isCompleteKK
+        ? (typeof OutboxManager !== 'undefined' && OutboxManager.getEntries
+            ? OutboxManager.getEntries().find((item) => item.type === 'register_customer' && item.payload && item.payload.p_no_kk === kk && item.status !== 'failed_terminal')
+            : null)
+        : null;
       const statusArea = document.getElementById('record-customer-status-area');
       const stockSummary = getWarehouseStockSummary();
 
@@ -5631,6 +5933,60 @@ const INDONESIA_REGIONS = {
           isLocked: false,
         });
         updateRecordSummaryBar(stats.beras.remaining, stats.gas.remaining);
+      } else if (pendingOutboxCust) {
+        const custName = (pendingOutboxCust.payload && pendingOutboxCust.payload.p_nama) || (pendingOutboxCust.metadata && pendingOutboxCust.metadata.nama) || 'WARGA';
+        const desa = (pendingOutboxCust.payload && pendingOutboxCust.payload.p_desa) || '';
+        const kec = (pendingOutboxCust.payload && pendingOutboxCust.payload.p_kecamatan) || '';
+        const kab = (pendingOutboxCust.payload && pendingOutboxCust.payload.p_kabupaten) || '';
+        const addrParts = [desa, kec, kab].filter(Boolean);
+        const displayAddr = addrParts.length > 0 ? addrParts.join(', ') : 'Alamat tersimpan di antrean';
+
+        statusArea.innerHTML = `
+          <div class="p-3.5 rounded-xl bg-amber-50/90 border border-amber-300 space-y-2.5 animate-fade-in">
+            <div class="flex items-start justify-between gap-2.5">
+              <div class="flex items-start gap-2.5 min-w-0">
+                <div class="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5">
+                  <i data-lucide="clock" class="w-4 h-4"></i>
+                </div>
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase bg-amber-200 text-amber-900 border border-amber-300">MENUNGGU SINKRONISASI</span>
+                    <span class="font-mono text-xs font-bold text-slate-700">${formatKKMasked(kk)}</span>
+                  </div>
+                  <h3 class="text-sm font-extrabold text-slate-900 mt-0.5 truncate">${escapeHtml(custName)}</h3>
+                  <p class="text-[11px] text-slate-600 truncate">${escapeHtml(displayAddr)}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onclick="syncWithSupabase()"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-2xs transition shrink-0 cursor-pointer"
+                title="Sinkronkan pendaftaran ini ke Cloud Supabase sekarang"
+              >
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                <span>Sinkronkan Sekarang</span>
+              </button>
+            </div>
+            <div class="p-2 rounded-lg bg-amber-100/70 border border-amber-200 text-amber-900 text-xs font-medium flex items-center gap-2">
+              <i data-lucide="alert-circle" class="w-4 h-4 text-amber-600 shrink-0"></i>
+              <span>Pendaftaran KK ini tersimpan di antrean perangkat lokal dan belum diverifikasi oleh server Cloud. Penyaluran kuota dapat dilakukan setelah sinkronisasi berhasil.</span>
+            </div>
+          </div>
+        `;
+
+        document.getElementById('record-quota-blocked-banner').classList.add('hidden');
+        document.getElementById('record-quota-hint').textContent = 'KK Menunggu Sinkronisasi Cloud';
+
+        setRecordItemsDisabledState({
+          berasRemaining: 0,
+          gasRemaining: 0,
+          berasStock: stockSummary.berasStock,
+          gasStock: stockSummary.gasStock,
+          berasCycleText: 'Menunggu Sinkronisasi Cloud',
+          gasCycleText: 'Menunggu Sinkronisasi Cloud',
+          isLocked: true,
+        });
+        updateRecordSummaryBar(0, 0);
       } else {
         const defReg = getDefaultRegionHierarchy();
         if (!state.record.newCustomerProv) {
@@ -5917,7 +6273,18 @@ const INDONESIA_REGIONS = {
       safeCreateIcons();
     }
 
-    function saveQuotaRecord() {
+    async function saveQuotaRecord() {
+      const authSession = getAuthSession();
+      if (!authSession) {
+        showToast('Pencatatan transaksi kuota memerlukan login akun petugas.', 'error');
+        openLoginModal();
+        return;
+      }
+      if (!authSession.role || !['cashier', 'supervisor', 'admin'].includes(authSession.role)) {
+        showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang penyaluran kuota. Hubungi administrator.`, 'error');
+        return;
+      }
+
       const kk = state.record.kkInput;
       const qBeras = Number(state.record.qtyBeras);
       const qGas = Number(state.record.qtyGas);
@@ -5971,25 +6338,76 @@ const INDONESIA_REGIONS = {
         };
       }
 
-      // Jika jumlah barang masih 0
+      // Guard antrean sinkronisasi: cegah transaksi jika KK masih dalam status pending outbox
+      const pendingCustOutbox = (typeof OutboxManager !== 'undefined' && OutboxManager.getEntries)
+        ? OutboxManager.getEntries().find((item) => item.type === 'register_customer' && item.payload && item.payload.p_no_kk === kk && item.status !== 'failed_terminal')
+        : null;
+      if (pendingCustOutbox) {
+        showToast('Data KK ini masih dalam antrean sinkronisasi Cloud (MENUNGGU SINKRONISASI). Harap sinkronkan data sebelum menyalurkan barang.', 'warning');
+        return;
+      }
+
+      // Jika jumlah barang masih 0 (Registrasi KK Murni Tanpa Penyaluran Barang)
       if (qBeras + qGas <= 0) {
         if (isNewCustomer) {
           openConfirmModal(
             'Daftarkan KK Baru?',
-            `Daftarkan ${customer.nama} (${formatKKMasked(customer.no_kk)}) ke daftar pelanggan tanpa pencatatan barang saat ini?`,
-            () => {
+            `Daftarkan ${customer.nama} (${formatKKMasked(customer.no_kk)}) ke basis data cloud tanpa pencatatan barang saat ini?`,
+            async () => {
               syncLatestFromLocalStorage();
               if (state.customers.some((c) => c.no_kk === customer.no_kk)) {
                 refreshAllUI();
                 showToast(`Data KK ${customer.nama} sudah didaftarkan di tab lain.`, 'info');
                 return;
               }
-              state.customers.unshift(customer);
-              state.record.newCustomerName = '';
-              state.record.newCustomerDetail = '';
-              persistState();
-              refreshAllUI();
-              showToast(`Data KK ${customer.nama} berhasil didaftarkan!`, 'success');
+
+              const { url, key } = getSupabaseConfig();
+              const isCloud = Boolean(url && key);
+
+              if (isCloud) {
+                try {
+                  const resData = await pushSingleCustomerToSupabase(customer);
+                  if (!state.customers.some((c) => c.no_kk === customer.no_kk)) {
+                    customer.is_dirty = false;
+                    if (resData && resData.customer && resData.customer.member_id) {
+                      customer.member_id = resData.customer.member_id;
+                    }
+                    state.customers.unshift(customer);
+                  }
+                  state.record.newCustomerName = '';
+                  state.record.newCustomerDetail = '';
+                  persistState();
+                  refreshAllUI();
+                  showToast(`Data KK ${customer.nama} berhasil didaftarkan ke cloud!`, 'success');
+                } catch (err) {
+                  const isTerminal = isTerminalRpcError(err);
+                  if (isTerminal) {
+                    refreshAllUI();
+                    const errMsg = mapRpcResponseToUserMessage(err.code || String(err.status), err.message) || err.message;
+                    showToast(`Pendaftaran ditolak server (${err.code || err.status || 'TERMINAL'}): ${errMsg}`, 'error');
+                  } else {
+                    refreshAllUI();
+                    showToast('Koneksi timeout/terputus. Pendaftaran KK disimpan ke antrean outbox (MENUNGGU SINKRONISASI).', 'warning');
+                  }
+                }
+              } else {
+                const reqId = generateRequestId();
+                customer.registration_request_id = reqId;
+                const rpcPayload = {
+                  p_request_id: reqId,
+                  p_no_kk: customer.no_kk,
+                  p_member_id: customer.member_id || generateNextMemberId(customer.no_kk),
+                  p_nama: customer.nama,
+                  p_provinsi: customer.provinsi || '',
+                  p_kabupaten: customer.kabupaten || '',
+                  p_kecamatan: customer.kecamatan || '',
+                  p_desa: customer.desa || '',
+                  p_detail: customer.detail || '',
+                };
+                OutboxManager.add('register_customer', reqId, rpcPayload, { ...customer });
+                refreshAllUI();
+                showToast('Mode offline aktif. Pendaftaran KK disimpan ke antrean outbox (MENUNGGU SINKRONISASI).', 'info');
+              }
             }
           );
           return;
@@ -6039,31 +6457,7 @@ const INDONESIA_REGIONS = {
           if (isSubmittingRecord) return;
           isSubmittingRecord = true;
 
-          // Guard Concurrency: Verifikasi kesegaran kuota langsung ke server memakai rumus siklus yang identik
-          try {
-            const { url, key } = getSupabaseConfig();
-            if (url && key) {
-              const headers = getSupabaseHeaders(key);
-              const timeoutSignal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(6000) : undefined;
-              const freshRes = await fetch(`${url}/rest/v1/logs?no_kk=eq.${encodeURIComponent(customer.no_kk)}&date=lte.${encodeURIComponent(txDateStr)}&select=id,date,no_kk,qty_beras,qty_gas`, { headers, signal: timeoutSignal });
-              if (freshRes.ok) {
-                const freshLogs = await freshRes.json();
-                const freshBeras = computeItemCycleStatusFromLogs(freshLogs, customer.no_kk, 'beras', txDateStr);
-                const freshGas = computeItemCycleStatusFromLogs(freshLogs, customer.no_kk, 'gas', txDateStr);
-
-                if (qBeras > freshBeras.remaining || qGas > freshGas.remaining) {
-                  showToast('Transaksi dibatalkan: Kuota telah terambil di perangkat lain (Concurrency Guard)!', 'error');
-                  await syncWithSupabase(true);
-                  isSubmittingRecord = false;
-                  return;
-                }
-              }
-            }
-          } catch (e) {
-            console.warn('Pre-commit server check warning:', e);
-          }
-
-          // Re-sync penyimpanan lokal tepat sebelum commit agar transaksi dari tab lain tidak tertimpa (Poin 45)
+          // Re-sync penyimpanan lokal tepat sebelum commit agar transaksi dari tab lain tidak tertimpa
           syncLatestFromLocalStorage();
 
           // Re-validasi kuota pelanggan setelah sync tab lokal
@@ -6085,22 +6479,130 @@ const INDONESIA_REGIONS = {
             return;
           }
 
+          const { url, key } = getSupabaseConfig();
+          const isCloudConnected = Boolean(url && key);
+
           if (!state.customers.some((c) => c.no_kk === customer.no_kk)) {
             state.customers.unshift(customer);
-            pushSingleCustomerToSupabase(customer);
+            if (isCloudConnected) {
+              await pushSingleCustomerToSupabase(customer);
+            }
           }
 
+          const requestId = generateRequestId();
+          const newLogId = generateSecureTxId('LOG');
           const now = new Date();
           const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace('.', ':');
-          const newLogId = generateSecureTxId('LOG');
+          const nowISO = now.toISOString();
+          const memberId = customer.member_id || getCustomerFormattedId(customer) || generateNextMemberId(customer.no_kk);
 
-          const nowISO = new Date().toISOString();
+          if (isCloudConnected) {
+            // EKSEKUSI EKSKLUSIF LEWAT RPC ATOMIK public.process_quota_dispense
+            const dispensePayload = {
+              p_request_id: requestId,
+              p_no_kk: customer.no_kk,
+              p_nama: customer.nama,
+              p_member_id: memberId,
+              p_qty_beras: qBeras,
+              p_qty_gas: qGas,
+              p_tx_date: txDateStr,
+              p_operator_id: state.operatorName || 'OPERATOR',
+              p_custom_log_id: newLogId,
+              p_provinsi: customer.provinsi || '',
+              p_kabupaten: customer.kabupaten || '',
+              p_kecamatan: customer.kecamatan || '',
+              p_desa: customer.desa || '',
+              p_detail: customer.detail || '',
+            };
+            OutboxManager.add('process_quota_dispense', requestId, dispensePayload);
+            OutboxManager.markInFlight(requestId);
+
+            try {
+              const rpcResult = await callProcessQuotaDispenseRPC(dispensePayload);
+              OutboxManager.remove(requestId);
+
+              const serverLog = rpcResult.log || {};
+              const finalLogId = serverLog.id || newLogId;
+
+              const finalLogEntry = {
+                id: finalLogId,
+                request_id: serverLog.request_id || requestId,
+                date: serverLog.date || txDateStr,
+                time: timeStr,
+                no_kk: serverLog.no_kk || customer.no_kk,
+                nama: serverLog.nama || customer.nama,
+                member_id: serverLog.member_id || memberId,
+                qty_beras: Number(serverLog.qty_beras) || qBeras,
+                qty_gas: Number(serverLog.qty_gas) || qGas,
+                total_pcs: Number(serverLog.total_pcs) || (qBeras + qGas),
+                status: serverLog.status || 'COMPLETED',
+                is_dirty: false,
+                local_updated_at: nowISO,
+              };
+              state.logs.unshift(finalLogEntry);
+
+              // Sinkronisasi mutasi stok GI-WARGA ke state lokal (is_dirty: false, dibuat otomatis oleh RPC)
+              if (qBeras > 0) {
+                state.warehouseLogs.unshift({
+                  id: `WH-GI-${finalLogId}-BERAS`,
+                  date: txDateStr,
+                  type: 'GI-WARGA',
+                  item: 'beras',
+                  qty: qBeras,
+                  ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
+                  logId: finalLogId,
+                  is_dirty: false,
+                  local_updated_at: nowISO,
+                });
+              }
+              if (qGas > 0) {
+                state.warehouseLogs.unshift({
+                  id: `WH-GI-${finalLogId}-GAS`,
+                  date: txDateStr,
+                  type: 'GI-WARGA',
+                  item: 'gas',
+                  qty: qGas,
+                  ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
+                  logId: finalLogId,
+                  is_dirty: false,
+                  local_updated_at: nowISO,
+                });
+              }
+
+              state.record.qtyBeras = 0;
+              state.record.qtyGas = 0;
+              state.record.newCustomerName = '';
+              state.record.newCustomerDetail = '';
+              persistState();
+              refreshAllUI();
+
+              if (rpcResult.is_idempotent_replay) {
+                showToast(`Transaksi sudah tercatat sebelumnya (Replay Idempoten): ${qBeras} Beras, ${qGas} Gas untuk ${customer.nama}.`, 'info');
+              } else {
+                const remBeras = rpcResult.remaining_quota?.beras ?? (5 - qBeras);
+                const remGas = rpcResult.remaining_quota?.gas ?? (5 - qGas);
+                showToast(`Transaksi kuota berhasil diproses! Disalurkan: ${qBeras} Beras, ${qGas} Gas untuk ${customer.nama}. Sisa kuota: ${remBeras} Beras, ${remGas} Gas.`, 'success');
+              }
+            } catch (err) {
+              console.error('Dispense RPC error:', err);
+              const isTerminal = isTerminalRpcError(err);
+              OutboxManager.markFailed(requestId, err, isTerminal);
+              showToast(err.message, 'error');
+            } finally {
+              isSubmittingRecord = false;
+            }
+            return;
+          }
+
+          // Fallback lokal mandiri jika belum mengonfigurasi Cloud Supabase
           const newLogEntry = {
             id: newLogId,
+            request_id: requestId,
             date: txDateStr,
             time: timeStr,
             no_kk: customer.no_kk,
             nama: customer.nama,
+            member_id: memberId,
             qty_beras: qBeras,
             qty_gas: qGas,
             total_pcs: qBeras + qGas,
@@ -6110,7 +6612,7 @@ const INDONESIA_REGIONS = {
           state.logs.unshift(newLogEntry);
 
           if (qBeras > 0) {
-            const whBeras = {
+            state.warehouseLogs.unshift({
               id: `WH-GI-${newLogId}-BERAS`,
               date: txDateStr,
               type: 'GI-WARGA',
@@ -6120,12 +6622,10 @@ const INDONESIA_REGIONS = {
               logId: newLogId,
               is_dirty: true,
               local_updated_at: nowISO,
-            };
-            state.warehouseLogs.unshift(whBeras);
-            pushWarehouseMutationToSupabase(whBeras);
+            });
           }
           if (qGas > 0) {
-            const whGas = {
+            state.warehouseLogs.unshift({
               id: `WH-GI-${newLogId}-GAS`,
               date: txDateStr,
               type: 'GI-WARGA',
@@ -6135,9 +6635,7 @@ const INDONESIA_REGIONS = {
               logId: newLogId,
               is_dirty: true,
               local_updated_at: nowISO,
-            };
-            state.warehouseLogs.unshift(whGas);
-            pushWarehouseMutationToSupabase(whGas);
+            });
           }
 
           state.record.qtyBeras = 0;
@@ -6147,35 +6645,10 @@ const INDONESIA_REGIONS = {
           persistState();
           refreshAllUI();
 
-          let serverSyncSuccess = false;
-          try {
-            await pushSingleLogToSupabase(newLogEntry);
-            serverSyncSuccess = true;
-          } catch (e) {
-            console.warn('Sync log error:', e);
-            // Rollback jika server menolak karena pelanggaran kuota atau aturan database
-            if (e.message && (e.message.includes('Pelanggaran Kuota') || e.message.includes('chk_') || e.message.includes('Server menolak'))) {
-              state.logs = state.logs.filter((l) => l.id !== newLogId);
-              state.warehouseLogs = state.warehouseLogs.filter((w) => w.logId !== newLogId);
-              persistState();
-              refreshAllUI();
-              showToast(`Ditolak Server: ${e.message}`, 'error');
-              isSubmittingRecord = false;
-              return;
-            }
-          }
-
-          if (serverSyncSuccess) {
-            showUndoToast(
-              `Tersimpan & Terhubung Cloud: ${qBeras} Beras, ${qGas} Gas untuk ${customer.nama}.`,
-              newLogId
-            );
-          } else {
-            showUndoToast(
-              `Tersimpan Lokal (Antrean Offline): ${qBeras} Beras, ${qGas} Gas untuk ${customer.nama}.`,
-              newLogId
-            );
-          }
+          showUndoToast(
+            `Tersimpan Lokal: ${qBeras} Beras, ${qGas} Gas untuk ${customer.nama}.`,
+            newLogId
+          );
           isSubmittingRecord = false;
         }
       );
@@ -6674,8 +7147,18 @@ const INDONESIA_REGIONS = {
       document.getElementById('modal-add-customer').classList.add('hidden');
     }
 
-    function handleAddCustomerSubmit(e) {
+    async function handleAddCustomerSubmit(e) {
       e.preventDefault();
+      const authSession = getAuthSession();
+      if (!authSession) {
+        showToast('Pendaftaran pelanggan baru memerlukan login akun petugas.', 'error');
+        openLoginModal();
+        return;
+      }
+      if (!authSession.role || !['cashier', 'supervisor', 'admin'].includes(authSession.role)) {
+        showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang registrasi pelanggan. Hubungi administrator.`, 'error');
+        return;
+      }
       const no_kk = document.getElementById('new-kk-number').value.replace(/\D/g, '');
       const nama = document.getElementById('new-kk-name').value.trim().toUpperCase();
       const no_hp = (document.getElementById('new-kk-phone')?.value || '').trim();
@@ -6726,12 +7209,59 @@ const INDONESIA_REGIONS = {
         detail,
         created_at: new Date().toISOString(),
       };
-      state.customers.unshift(newCust);
-      persistState();
-      closeAddCustomerModal();
-      refreshAllUI();
-      showToast(`Data KK atas nama ${nama} berhasil ditambahkan.`, 'success');
-      pushSingleCustomerToSupabase(newCust);
+
+      const { url, key } = getSupabaseConfig();
+      const isCloud = Boolean(url && key);
+
+      if (isCloud) {
+        try {
+          const resData = await pushSingleCustomerToSupabase(newCust);
+          if (!state.customers.some((c) => c.no_kk === newCust.no_kk)) {
+            newCust.is_dirty = false;
+            if (resData && resData.customer && resData.customer.member_id) {
+              newCust.member_id = resData.customer.member_id;
+            }
+            state.customers.unshift(newCust);
+          }
+          persistState();
+          closeAddCustomerModal();
+          refreshAllUI();
+          showToast(`Data KK atas nama ${nama} berhasil didaftarkan ke cloud.`, 'success');
+        } catch (err) {
+          const isTerminal = isTerminalRpcError(err);
+          if (isTerminal) {
+            closeAddCustomerModal();
+            refreshAllUI();
+            const errMsg = mapRpcResponseToUserMessage(err.code || String(err.status), err.message) || err.message;
+            showToast(`Pendaftaran ditolak server (${err.code || err.status || 'TERMINAL'}): ${errMsg}`, 'error');
+          } else {
+            closeAddCustomerModal();
+            refreshAllUI();
+            showToast(`Koneksi timeout/terputus. Pendaftaran KK ${nama} disimpan ke antrean outbox (MENUNGGU SINKRONISASI).`, 'warning');
+          }
+        }
+      } else {
+        const reqId = generateRequestId();
+        newCust.registration_request_id = reqId;
+        const rpcPayload = {
+          p_request_id: reqId,
+          p_no_kk: newCust.no_kk,
+          p_member_id: newCust.member_id || generateNextMemberId(newCust.no_kk),
+          p_nama: newCust.nama,
+          p_provinsi: newCust.provinsi || '',
+          p_kabupaten: newCust.kabupaten || '',
+          p_kecamatan: newCust.kecamatan || '',
+          p_desa: newCust.desa || '',
+          p_detail: (newCust.no_hp && !(newCust.detail || '').includes(newCust.no_hp))
+            ? `[WA: ${newCust.no_hp}] ${newCust.detail || ''}`.trim()
+            : (newCust.detail || ''),
+        };
+        OutboxManager.add('register_customer', reqId, rpcPayload, { ...newCust });
+        persistState();
+        closeAddCustomerModal();
+        refreshAllUI();
+        showToast(`Data KK atas nama ${nama} disimpan di antrean outbox lokal (MENUNGGU SINKRONISASI).`, 'info');
+      }
     }
 
     // Auto-Lockout Inactivity Timer: 10 Menit (600.000 ms)
@@ -6870,14 +7400,13 @@ const INDONESIA_REGIONS = {
 
         openConfirmModal(
           'Hapus Data KK?',
-          `Data atas nama ${target.nama} (${formatKKMasked(noKK)}) akan dihapus dari daftar pelanggan terdaftar.`,
+          `Data atas nama ${target.nama} (${formatKKMasked(noKK)}) akan dihapus dari penyimpanan lokal browser. Catatan: Data Cloud tetap dipreservasi demi kepatuhan jejak audit.`,
           () => {
-            addTombstone('customer', noKK);
             state.customers = state.customers.filter((c) => c.no_kk !== noKK);
             if (state.record.kkInput === noKK) clearActiveKK();
             persistState();
             refreshAllUI();
-            showToast(`Data KK ${target.nama} telah dihapus.`, 'info');
+            showToast(`Data KK ${target.nama} telah dihapus dari penyimpanan lokal. Data Cloud tetap dipreservasi.`, 'info');
             deleteCustomerFromSupabase(noKK);
           }
         );
@@ -7170,16 +7699,13 @@ const INDONESIA_REGIONS = {
 
         openConfirmModal(
           'Batalkan Catatan Pengambilan (Supervisor)?',
-          `Catatan pengambilan atas nama ${target.nama} (${target.qty_beras} Beras, ${target.qty_gas} Gas) pada ${formatShortDateID(target.date)} akan dihapus, siklus kuota dihitung ulang, dan stok gudang GI-WARGA dikembalikan.`,
+          `Catatan pengambilan atas nama ${target.nama} (${target.qty_beras} Beras, ${target.qty_gas} Gas) pada ${formatShortDateID(target.date)} akan dibatalkan di penyimpanan lokal browser. Catatan Cloud tetap dipreservasi demi integritas audit trail.`,
           () => {
-            addTombstone('log', logId);
-            addTombstone('wh', `WH-GI-${logId}-BERAS`);
-            addTombstone('wh', `WH-GI-${logId}-GAS`);
             state.logs = state.logs.filter((l) => l.id !== logId);
             state.warehouseLogs = state.warehouseLogs.filter((w) => w.logId !== logId);
             persistState();
             refreshAllUI();
-            showToast('Catatan dibatalkan dengan otorisasi supervisor.', 'info');
+            showToast('Catatan dibatalkan di penyimpanan lokal. Data Cloud tetap dipreservasi demi jejak audit.', 'info');
             deleteLogFromSupabase(logId);
           }
         );
@@ -7432,13 +7958,11 @@ const INDONESIA_REGIONS = {
           const savedLogData = { ...logTarget };
           closeEditLogModal();
 
-          showToast(`Transaksi ${savedLogData.id} (${savedLogData.nama}) berhasil direvisi: ${qBeras} Beras, ${qGas} Gas.`, 'success');
-
-          // Sinkronisasi ke Supabase Cloud (PATCH ke logs & sync warehouse_logs)
-          try {
-            await updateLogOnSupabase(savedLogData);
-          } catch (err) {
-            console.warn('Background update to Supabase failed:', err);
+          const { url, key } = getSupabaseConfig();
+          if (url && key) {
+            showToast(`Transaksi ${savedLogData.id} (${savedLogData.nama}) direvisi di cache lokal. Perhatian: Koreksi cloud dinonaktifkan demi integritas audit trail.`, 'warning');
+          } else {
+            showToast(`Transaksi ${savedLogData.id} (${savedLogData.nama}) berhasil direvisi di penyimpanan lokal.`, 'success');
           }
         }
       );
@@ -8672,6 +9196,38 @@ const INDONESIA_REGIONS = {
       if (!state.isAdminUnlocked) {
         gateEl.classList.remove('hidden');
         contentEl.classList.add('hidden');
+        const session = getAuthSession();
+        if (!session) {
+          gateEl.innerHTML = `
+            <div class="w-12 h-12 mx-auto rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-700 flex items-center justify-center shadow-2xs">
+              <i data-lucide="shield-alert" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Otorisasi Gudang Diperlukan</h3>
+              <p class="text-xs text-slate-500 mt-1">Pengelolaan stok memerlukan akun dengan peran Supervisor, Warehouse Admin, atau Admin.</p>
+            </div>
+            <div>
+              <button
+                type="button"
+                onclick="openLoginModal()"
+                class="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+              >
+                <i data-lucide="log-in" class="w-4 h-4 text-emerald-400"></i>
+                <span>Login Petugas Gudang</span>
+              </button>
+            </div>
+          `;
+        } else {
+          gateEl.innerHTML = `
+            <div class="w-12 h-12 mx-auto rounded-2xl bg-rose-50 border border-rose-200/90 text-rose-700 flex items-center justify-center shadow-2xs">
+              <i data-lucide="lock" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Akses Gudang Dibatasi</h3>
+              <p class="text-xs text-slate-500 mt-1">Peran akun Anda (${escapeHtml(session.role || 'tanpa role')}) tidak memiliki wewenang mengelola stok. Diperlukan peran Supervisor atau Warehouse Admin.</p>
+            </div>
+          `;
+        }
         safeCreateIcons();
         return;
       }
@@ -8958,6 +9514,16 @@ const INDONESIA_REGIONS = {
 
     function handleWarehouseMutationSubmit(e) {
       e.preventDefault();
+      const authSession = getAuthSession();
+      if (!authSession) {
+        showToast('Pencatatan mutasi gudang memerlukan login akun petugas/supervisor.', 'error');
+        openLoginModal();
+        return;
+      }
+      if (!authSession.role || !['supervisor', 'warehouse_admin', 'admin'].includes(authSession.role)) {
+        showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang mutasi gudang. Hubungi administrator.`, 'error');
+        return;
+      }
       if (!state.isAdminUnlocked) return;
 
       const item = document.getElementById('wh-form-item').value;
@@ -8980,12 +9546,20 @@ const INDONESIA_REGIONS = {
         }
       }
 
+      const supportedTypes = ['INITIAL-STOCK', 'GR', 'GI-MANUAL'];
+      if (!supportedTypes.includes(state.warehouseFormType)) {
+        showToast(`Tipe mutasi "${state.warehouseFormType}" tidak didukung via RPC Fase-3. Tipe pembatalan/refund memerlukan RPC reversal khusus.`, 'error');
+        return;
+      }
+
       const isInitial = state.warehouseFormType === 'INITIAL-STOCK';
       const isGR = state.warehouseFormType === 'GR';
       const prefix = isInitial ? 'WH-INIT' : (isGR ? 'WH-GR' : 'WH-GI');
+      const requestId = generateRequestId();
 
       const newWhEntry = {
         id: generateSecureTxId(prefix),
+        request_id: requestId,
         date,
         type: state.warehouseFormType,
         item,
@@ -9004,23 +9578,48 @@ const INDONESIA_REGIONS = {
       openConfirmModal(
         `Konfirmasi ${state.warehouseFormType}?`,
         `Simpan ${typeLabel}: ${qty} ${itemLabel} (Ref: ${ref || (isInitial ? 'STOK AWAL / OPNAME' : '-')}) pada tanggal ${formatShortDateID(date)}?`,
-        () => {
-          state.warehouseLogs.unshift(newWhEntry);
+        async () => {
+          const { url, key } = getSupabaseConfig();
+          const isCloud = Boolean(url && key);
 
-          document.getElementById('wh-form-qty').value = '';
-          document.getElementById('wh-form-ref').value = '';
-          const presetSelect = document.getElementById('wh-ref-preset-select');
-          if (presetSelect) presetSelect.value = '';
-          persistState();
-          refreshAllUI();
-          pushWarehouseMutationToSupabase(newWhEntry);
+          if (isCloud) {
+            try {
+              await pushWarehouseMutationToSupabase(newWhEntry);
+              state.warehouseLogs.unshift(newWhEntry);
 
-          const toastMsg = isInitial
-            ? `Stok Awal (Opname) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat.`
-            : (isGR
-              ? `Barang Masuk (GR) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat.`
-              : `GI Manual -${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat.`);
-          showToast(toastMsg, 'success');
+              document.getElementById('wh-form-qty').value = '';
+              document.getElementById('wh-form-ref').value = '';
+              const presetSelect = document.getElementById('wh-ref-preset-select');
+              if (presetSelect) presetSelect.value = '';
+              persistState();
+              refreshAllUI();
+
+              const toastMsg = isInitial
+                ? `Stok Awal (Opname) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat di cloud.`
+                : (isGR
+                  ? `Barang Masuk (GR) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat di cloud.`
+                  : `GI Manual -${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} berhasil dicatat di cloud.`);
+              showToast(toastMsg, 'success');
+            } catch (err) {
+              showToast(`Gagal mencatat mutasi gudang ke cloud: ${err.message}`, 'error');
+            }
+          } else {
+            state.warehouseLogs.unshift(newWhEntry);
+
+            document.getElementById('wh-form-qty').value = '';
+            document.getElementById('wh-form-ref').value = '';
+            const presetSelect = document.getElementById('wh-ref-preset-select');
+            if (presetSelect) presetSelect.value = '';
+            persistState();
+            refreshAllUI();
+
+            const toastMsg = isInitial
+              ? `Stok Awal (Opname) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} dicatat secara lokal.`
+              : (isGR
+                ? `Barang Masuk (GR) +${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} dicatat secara lokal.`
+                : `GI Manual -${qty} ${item === 'beras' ? 'sak Beras' : 'tabung Gas'} dicatat secara lokal.`);
+            showToast(`${toastMsg} (Tersimpan lokal, belum tersinkron cloud)`, 'info');
+          }
         }
       );
     }
@@ -9045,7 +9644,7 @@ const INDONESIA_REGIONS = {
           state.warehouseLogs = state.warehouseLogs.filter((w) => w.id !== whId);
           persistState();
           refreshAllUI();
-          showToast('Mutasi gudang dihapus dan saldo diperbarui.', 'info');
+          showToast('Mutasi gudang dihapus dari penyimpanan lokal. Catatan Cloud tetap dipreservasi demi integritas audit saldo fisik.', 'info');
           deleteWarehouseMutationFromSupabase(whId);
         }
       );
@@ -9251,9 +9850,12 @@ const INDONESIA_REGIONS = {
       cust.member_id = newId;
       cust.card_reissued_at = new Date().toISOString();
 
-      // 3. Simpan state dan push ke cloud
+      // 3. Simpan state lokal (modifikasi identitas di cloud dinonaktifkan tanpa RPC khusus)
       persistState();
-      pushSingleCustomerToSupabase(cust);
+      const { url: urlReissue, key: keyReissue } = getSupabaseConfig();
+      if (urlReissue && keyReissue) {
+        showToast(`Kartu baru ${newId} diterbitkan di lokal. Modifikasi identitas di Cloud dinonaktifkan tanpa RPC otorisasi penerbitan kartu.`, 'warning');
+      }
 
       // 4. Buka kembali modal dengan kartu baru
       openQRCardModal(cust.no_kk);
@@ -9865,6 +10467,135 @@ const INDONESIA_REGIONS = {
         // Row Beras
         ctx.fillStyle = '#475569';
         ctx.font = '700 20px system-ui, -apple-system, sans-serif';
+        ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+        ctx.lineTo(x + radius, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+        ctx.lineTo(x, y + radius);
+        ctx.quadraticCurveTo(x, y, x + radius, y);
+        ctx.closePath();
+      }
+
+      // 1. Clip sudut kartu CR80 (radius 3.18mm = ~38px di 300 DPI)
+      roundRect(ctx, 0, 0, 1011, 638, 38);
+      ctx.clip();
+
+      // 2. Latar Putih Bersih
+      ctx.fillStyle = '#FFFFFF';
+      ctx.fillRect(0, 0, 1011, 638);
+
+      // 3. Pola Titik Halus Indigo
+      ctx.fillStyle = 'rgba(67, 56, 202, 0.07)';
+      for (let x = 12; x < 1011; x += 24) {
+        for (let y = 12; y < 638; y += 24) {
+          ctx.beginPath();
+          ctx.arc(x, y, 1.6, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      if (side === 'front') {
+        // === TAMPAK DEPAN ===
+        // Header Gradient
+        const grad = ctx.createLinearGradient(0, 0, 1011, 0);
+        grad.addColorStop(0, '#312E81');
+        grad.addColorStop(0.5, '#4338CA');
+        grad.addColorStop(1, '#4F46E5');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1011, 98);
+
+        // Ikon Shield Koral
+        ctx.save();
+        roundRect(ctx, 36, 22, 54, 54, 12);
+        ctx.fillStyle = '#FB923C';
+        ctx.fill();
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(63, 34);
+        ctx.lineTo(76, 38);
+        ctx.lineTo(76, 52);
+        ctx.quadraticCurveTo(76, 64, 63, 68);
+        ctx.quadraticCurveTo(50, 64, 50, 52);
+        ctx.lineTo(50, 38);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(56, 51);
+        ctx.lineTo(61, 56);
+        ctx.lineTo(70, 45);
+        ctx.stroke();
+        ctx.restore();
+
+        // Teks Judul Header
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 24px system-ui, -apple-system, sans-serif';
+        ctx.fillText('KARTU KENDALI KUOTA', 105, 57);
+
+        // Pill Badge Kanan
+        ctx.save();
+        roundRect(ctx, 765, 28, 210, 42, 21);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 16px system-ui, -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('BERAS 5KG • GAS 3KG', 870, 55);
+        ctx.restore();
+
+        // Pita Identitas Utama
+        const ribGrad = ctx.createLinearGradient(0, 98, 1011, 98);
+        ribGrad.addColorStop(0, '#EEF2FF');
+        ribGrad.addColorStop(0.6, 'rgba(238, 242, 255, 0.6)');
+        ribGrad.addColorStop(1, 'rgba(255, 247, 237, 0.4)');
+        ctx.fillStyle = ribGrad;
+        ctx.fillRect(0, 98, 1011, 168);
+
+        ctx.strokeStyle = '#E0E7FF';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 98);
+        ctx.lineTo(1011, 98);
+        ctx.moveTo(0, 266);
+        ctx.lineTo(1011, 266);
+        ctx.stroke();
+
+        // Baris 1: Nomor Registrasi
+        ctx.fillStyle = '#1E1B4B';
+        ctx.font = '900 34px "JetBrains Mono", Consolas, monospace';
+        ctx.fillText(cust.member_id || getCustomerFormattedId(cust), 36, 146);
+
+        // Baris 2: Nama Kepala Keluarga
+        ctx.fillStyle = '#4338CA';
+        ctx.font = '800 24px system-ui, -apple-system, sans-serif';
+        ctx.fillText((cust.nama || '-').toUpperCase(), 36, 192);
+
+        // Baris 3: Alamat Lengkap
+        ctx.fillStyle = '#64748B';
+        ctx.font = '600 17px system-ui, -apple-system, sans-serif';
+        const addressText = getCustomerCardAddress(cust);
+        ctx.fillText(addressText, 36, 236);
+
+        // Area Bawah: Kotak Batas Kuota Maksimum
+        roundRect(ctx, 36, 296, 470, 230, 20);
+        ctx.fillStyle = 'rgba(238, 242, 255, 0.75)';
+        ctx.fill();
+        ctx.strokeStyle = '#E0E7FF';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        ctx.fillStyle = '#3730A3';
+        ctx.font = '900 18px system-ui, -apple-system, sans-serif';
+        ctx.fillText('BATAS KUOTA MAKSIMUM', 60, 338);
+
+        const berasLimit = (state.settings && state.settings.maxBerasPerCycle) || 5;
+        const gasLimit = (state.settings && state.settings.maxGasPerCycle) || 5;
+        const cycleDays = (state.settings && state.settings.cycleDays) || 30;
+
+        // Row Beras
+        ctx.fillStyle = '#475569';
+        ctx.font = '700 20px system-ui, -apple-system, sans-serif';
         ctx.fillText('Beras', 60, 396);
         ctx.fillStyle = '#1E1B4B';
         ctx.font = '900 20px system-ui, -apple-system, sans-serif';
@@ -10291,23 +11022,27 @@ const INDONESIA_REGIONS = {
           clearActiveKK();
           refreshAllUI();
 
-          try {
-            const { url, key } = getSupabaseConfig();
-            if (url && key) {
-              const headers = getSupabaseHeaders(key);
-              headers['Prefer'] = 'return=representation';
-              await Promise.all([
-                fetch(`${url}/rest/v1/customers?member_id=neq.placeholder`, { method: 'DELETE', headers }),
-                fetch(`${url}/rest/v1/logs?id=neq.placeholder`, { method: 'DELETE', headers }),
-                fetch(`${url}/rest/v1/warehouse_logs?id=neq.placeholder`, { method: 'DELETE', headers }),
-              ]);
-            }
-          } catch (e) {
-            console.warn('Gagal menghapus Supabase:', e);
-          }
+          localStorage.removeItem(STORAGE_KEYS.CUSTOMERS);
+          localStorage.removeItem(STORAGE_KEYS.LOGS);
+          localStorage.removeItem(STORAGE_KEYS.WAREHOUSE);
+          localStorage.removeItem(STORAGE_KEYS.DO_SEQ);
+          localStorage.removeItem(STORAGE_KEYS.OUTBOX);
+          localStorage.removeItem(STORAGE_KEYS.DEAD_LETTER);
+          sessionStorage.clear();
 
-          updateCloudStatusUI('connected', 'Sinkron terakhir: Data dikosongkan (0 KK, 0 Transaksi).');
-          showToast('Seluruh data berhasil dikosongkan bersih (Lokal & Supabase Cloud).', 'info');
+          state.customers = [];
+          state.logs = [];
+          state.warehouseLogs = [];
+          state.doSeqTracker = {};
+          tombstones = [];
+          persistTombstones();
+          persistState();
+
+          clearActiveKK();
+          refreshAllUI();
+
+          updateCloudStatusUI('connected', 'Penyimpanan lokal browser dikosongkan. Catatan Cloud tetap dipreservasi.');
+          showToast('Seluruh data lokal browser berhasil dikosongkan bersih. Catatan Cloud Supabase tetap dipreservasi demi perlindungan audit trail.', 'info');
         }
       );
     }
@@ -10390,17 +11125,540 @@ const INDONESIA_REGIONS = {
     let cloudStatus = 'offline'; // 'connected' | 'syncing' | 'offline'
 
     function getSupabaseConfig() {
-      const url = (document.getElementById('set-supabase-url')?.value || state.settings.supabaseUrl || DEFAULT_SUPABASE_URL).trim().replace(/\/+$/, '');
-      const key = (document.getElementById('set-supabase-key')?.value || state.settings.supabaseKey || DEFAULT_SUPABASE_KEY).trim();
+      const configUrl = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseUrl) || DEFAULT_SUPABASE_URL;
+      const configKey = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || DEFAULT_SUPABASE_KEY;
+
+      // Prioritas 1: DEFAULT_SUPABASE_URL & DEFAULT_SUPABASE_KEY dari window.__APP_CONFIG__ (config.js)
+      // Untuk build Staging, jika DEFAULT_SUPABASE_URL tersedia, selalu gunakan URL tersebut.
+      // Prioritas 2 (Fallback): state.settings.supabaseUrl & state.settings.supabaseKey
+      // Prioritas 3 (Fallback DOM input): set-supabase-url & set-supabase-key
+      const url = (configUrl || (state && state.settings && state.settings.supabaseUrl) || document.getElementById('set-supabase-url')?.value || '').trim().replace(/\/+$/, '');
+      const key = (configKey || (state && state.settings && state.settings.supabaseKey) || document.getElementById('set-supabase-key')?.value || '').trim();
+
+      // Pembersihan khusus hanya untuk konfigurasi Supabase lama yang tersimpan, tanpa membersihkan data aplikasi
+      if (configUrl && state && state.settings) {
+        let settingsDirty = false;
+        if (state.settings.supabaseUrl !== url) {
+          state.settings.supabaseUrl = url;
+          settingsDirty = true;
+        }
+        if (configKey && state.settings.supabaseKey !== key) {
+          state.settings.supabaseKey = key;
+          settingsDirty = true;
+        }
+        if (settingsDirty && typeof localStorage !== 'undefined' && typeof STORAGE_KEYS !== 'undefined') {
+          try {
+            const rawStored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+            if (rawStored) {
+              const parsed = JSON.parse(rawStored);
+              if (parsed && typeof parsed === 'object') {
+                parsed.supabaseUrl = url;
+                if (configKey) parsed.supabaseKey = key;
+                localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Bersihkan juga legacy key standalone lama jika pernah tersimpan di localStorage
+      if (typeof localStorage !== 'undefined') {
+        ['supabase_url', 'supabase_key', 'supabaseUrl', 'supabaseKey', 'catat_kuota_supabase_url', 'catat_kuota_supabase_key'].forEach((k) => {
+          try { localStorage.removeItem(k); } catch (e) {}
+        });
+      }
+
+      // Sinkronkan input form pengaturan jika elemen form telah tersedia di DOM
+      const urlInput = document.getElementById('set-supabase-url');
+      if (urlInput && url && urlInput.value !== url) urlInput.value = url;
+      const keyInput = document.getElementById('set-supabase-key');
+      if (keyInput && key && keyInput.value !== key) keyInput.value = key;
+
       return { url, key };
     }
 
-    function getSupabaseHeaders(key) {
-      return {
+    // =========================================================================
+    // KONTRAK SIGNATURE RPC PHASE-3 & STATIC ASSERTIONS
+    // =========================================================================
+    const RPC_SIGNATURE_CONTRACTS = {
+      process_quota_dispense: [
+        'p_request_id',
+        'p_no_kk',
+        'p_nama',
+        'p_member_id',
+        'p_qty_beras',
+        'p_qty_gas',
+        'p_tx_date',
+        'p_operator_id',
+        'p_custom_log_id',
+        'p_provinsi',
+        'p_kabupaten',
+        'p_kecamatan',
+        'p_desa',
+        'p_detail',
+      ],
+      register_customer: [
+        'p_request_id',
+        'p_no_kk',
+        'p_member_id',
+        'p_nama',
+        'p_provinsi',
+        'p_kabupaten',
+        'p_kecamatan',
+        'p_desa',
+        'p_detail',
+      ],
+      process_warehouse_mutation: [
+        'p_request_id',
+        'p_date',
+        'p_type',
+        'p_item',
+        'p_qty',
+        'p_ref',
+        'p_operator_id',
+        'p_custom_mutation_id',
+      ],
+    };
+
+    function assertRpcPayloadContract(rpcName, payload) {
+      const expectedParams = RPC_SIGNATURE_CONTRACTS[rpcName];
+      if (!expectedParams) {
+        throw new Error(`ASSERTION_ERROR: Kontrak RPC '${rpcName}' tidak terdaftar.`);
+      }
+      const actualKeys = Object.keys(payload || {});
+      const missingKeys = expectedParams.filter((k) => !actualKeys.includes(k));
+      const extraKeys = actualKeys.filter((k) => !expectedParams.includes(k));
+
+      if (missingKeys.length > 0 || extraKeys.length > 0) {
+        const errorMsg = `RPC_PAYLOAD_MISMATCH pada '${rpcName}': ` +
+          (missingKeys.length > 0 ? `Parameter hilang: [${missingKeys.join(', ')}]. ` : '') +
+          (extraKeys.length > 0 ? `Parameter terlarang/ekstra: [${extraKeys.join(', ')}].` : '');
+        console.error(errorMsg, { expectedParams, actualKeys });
+        throw new Error(errorMsg);
+      }
+      return true;
+    }
+
+    // =========================================================================
+    // 17B. SUPABASE AUTH SESSION MANAGEMENT (PHASE-3 SECURE INTEGRATION)
+    // =========================================================================
+    async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+      const ControllerClass = (typeof AbortController !== 'undefined')
+        ? AbortController
+        : (typeof window !== 'undefined' && window.AbortController ? window.AbortController : null);
+
+      const controller = ControllerClass ? new ControllerClass() : null;
+      let timeoutId = null;
+
+      if (controller) {
+        timeoutId = setTimeout(() => {
+          controller.abort();
+        }, timeoutMs);
+      }
+
+      try {
+        const fetchOptions = controller ? { ...options, signal: controller.signal } : options;
+        const response = await fetch(url, fetchOptions);
+        return response;
+      } catch (err) {
+        if (err.name === 'AbortError' || (controller && controller.signal && controller.signal.aborted)) {
+          const timeoutErr = new Error(`Request timeout ke server (${timeoutMs / 1000}s)`);
+          timeoutErr.name = 'TimeoutError';
+          timeoutErr.code = 'ETIMEDOUT';
+          timeoutErr.status = 408;
+          throw timeoutErr;
+        }
+        throw err;
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+    const SUPABASE_AUTH_STORAGE_KEY = 'catat_kuota_supabase_auth_session_v1';
+    const VALID_OPERATIONAL_ROLES = ['cashier', 'supervisor', 'warehouse_admin', 'admin'];
+
+    function parseJwtPayload(token) {
+      if (!token || typeof token !== 'string') return null;
+      try {
+        const parts = token.split('.');
+        if (parts.length < 2) return null;
+        const base64Url = parts[1];
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          atob(base64)
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join('')
+        );
+        return JSON.parse(jsonPayload);
+      } catch (err) {
+        console.warn('Failed to parse JWT payload:', err);
+        return null;
+      }
+    }
+
+    function extractStrictAppRole(userMetadataRole, jwtMetadataRole) {
+      const candidate = (userMetadataRole || jwtMetadataRole || '');
+      if (typeof candidate !== 'string') return null;
+      const cleanRole = candidate.toLowerCase().trim();
+      return VALID_OPERATIONAL_ROLES.includes(cleanRole) ? cleanRole : null;
+    }
+
+    function getAuthSession() {
+      try {
+        const raw = sessionStorage.getItem(SUPABASE_AUTH_STORAGE_KEY) || localStorage.getItem(SUPABASE_AUTH_STORAGE_KEY);
+        if (!raw) return null;
+        const session = JSON.parse(raw);
+        if (!session || !session.access_token) return null;
+        return session;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saveAuthSession(session, rememberPreference) {
+      if (!session) return;
+      const shouldRemember = (rememberPreference !== undefined)
+        ? (rememberPreference === true)
+        : (session.remember === true);
+      session.remember = shouldRemember;
+
+      const json = JSON.stringify(session);
+      sessionStorage.setItem(SUPABASE_AUTH_STORAGE_KEY, json);
+      if (shouldRemember) {
+        localStorage.setItem(SUPABASE_AUTH_STORAGE_KEY, json);
+      } else {
+        localStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY);
+      }
+    }
+
+    function clearAuthSession() {
+      sessionStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY);
+      localStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY);
+    }
+
+    async function loginWithSupabase(email, password, remember = true) {
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi pada Pengaturan.');
+      }
+
+      const cleanEmail = String(email || '').trim();
+      const cleanPass = String(password || '');
+      if (!cleanEmail || !cleanPass) {
+        throw new Error('Email dan kata sandi wajib diisi.');
+      }
+
+      const endpoint = `${url}/auth/v1/token?grant_type=password`;
+      const res = await fetchWithTimeout(endpoint, {
+        method: 'POST',
+        headers: {
+          'apikey': key,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: cleanEmail, password: cleanPass }),
+      }, 10000);
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errMsg = resData.error_description || resData.message || resData.msg || `Login gagal (HTTP ${res.status})`;
+        throw new Error(errMsg);
+      }
+
+      const accessToken = resData.access_token;
+      const refreshToken = resData.refresh_token;
+      const claims = parseJwtPayload(accessToken) || {};
+
+      // Ekstrak strict role HANYA dari resData.user.app_metadata.role atau claims.app_metadata.role
+      const rawUserRole = resData.user?.app_metadata?.role;
+      const rawJwtRole = claims.app_metadata?.role;
+      const serverRole = extractStrictAppRole(rawUserRole, rawJwtRole);
+
+      const expiresAt = resData.expires_at
+        ? resData.expires_at * 1000
+        : Date.now() + (resData.expires_in || 3600) * 1000;
+
+      const session = {
+        access_token: accessToken,
+        refresh_token: refreshToken,
+        expires_at: expiresAt,
+        user_id: resData.user?.id || claims.sub || '',
+        email: resData.user?.email || claims.email || cleanEmail,
+        role: serverRole, // null jika tidak valid / tidak ada
+        remember: remember === true,
+      };
+
+      saveAuthSession(session, session.remember);
+      state.operatorName = session.email;
+      applyRoleBasedUIPrivileges(session.role);
+      renderHeaderAuthBadge();
+      refreshAllUI();
+
+      if (!serverRole) {
+        showToast('Akun berhasil login tetapi belum memiliki role operasional. Hubungi administrator.', 'warning');
+      } else {
+        showToast(`Login berhasil sebagai ${session.email} (${session.role}).`, 'success');
+      }
+
+      return session;
+    }
+
+    async function refreshSupabaseSession() {
+      const session = getAuthSession();
+      if (!session || !session.refresh_token) {
+        throw new Error('AUTH_REQUIRED: Tidak ada refresh token yang valid.');
+      }
+
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      const endpoint = `${url}/auth/v1/token?grant_type=refresh_token`;
+      const res = await fetchWithTimeout(endpoint, {
+        method: 'POST',
+        headers: {
+          'apikey': key,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ refresh_token: session.refresh_token }),
+      }, 10000);
+
+      const resData = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console.warn('Silent refresh token gagal, sesi berakhir:', resData);
+        // Hapus sesi Auth lokal tanpa menghapus transaksi di outbox
+        logoutSupabase(false);
+        throw new Error('AUTH_EXPIRED: Sesi telah kedaluwarsa. Silakan login kembali.');
+      }
+
+      const newAccessToken = resData.access_token;
+      const newRefreshToken = resData.refresh_token || session.refresh_token;
+      const claims = parseJwtPayload(newAccessToken) || {};
+
+      // Ekstrak strict role pasca-refresh: tidak boleh ada role default
+      const rawUserRole = resData.user?.app_metadata?.role;
+      const rawJwtRole = claims.app_metadata?.role;
+      const serverRole = extractStrictAppRole(rawUserRole, rawJwtRole);
+
+      const expiresAt = resData.expires_at
+        ? resData.expires_at * 1000
+        : Date.now() + (resData.expires_in || 3600) * 1000;
+
+      const updatedSession = {
+        ...session,
+        access_token: newAccessToken,
+        refresh_token: newRefreshToken,
+        expires_at: expiresAt,
+        role: serverRole, // jika role dicabut/hilang, otomatis jadi null
+        remember: session.remember === true,
+      };
+
+      // Pertahankan preferensi remember persis seperti sesi asal
+      saveAuthSession(updatedSession, session.remember === true);
+      applyRoleBasedUIPrivileges(updatedSession.role);
+      renderHeaderAuthBadge();
+      return newAccessToken;
+    }
+
+    async function getValidAccessToken(requireAuth = false) {
+      const session = getAuthSession();
+      if (!session || !session.access_token) {
+        if (requireAuth) {
+          const err = new Error('AUTH_REQUIRED: Sesi login petugas diperlukan untuk melakukan mutasi data.');
+          err.code = '401';
+          err.status = 401;
+          throw err;
+        }
+        return null;
+      }
+
+      // Silent refresh jika token mendekati waktu kedaluwarsa (< 60 detik)
+      const now = Date.now();
+      if (session.expires_at && (session.expires_at - now < 60000)) {
+        try {
+          return await refreshSupabaseSession();
+        } catch (err) {
+          if (requireAuth) throw err;
+          return null;
+        }
+      }
+
+      return session.access_token;
+    }
+
+    async function getSupabaseHeaders(key, requireAuth = false) {
+      const headers = {
         'apikey': key,
-        'Authorization': `Bearer ${key}`,
         'Content-Type': 'application/json',
       };
+
+      const accessToken = await getValidAccessToken(requireAuth);
+      if (accessToken) {
+        const session = getAuthSession();
+        // Validasi strict role: jika dipanggil untuk mutasi RPC tetapi akun tidak memiliki role sah, tolak dengan 403
+        if (requireAuth && (!session || !session.role || !VALID_OPERATIONAL_ROLES.includes(session.role))) {
+          const err = new Error('UNAUTHORIZED_ROLE: Akun tidak memiliki peran operasional yang sah untuk mutasi data.');
+          err.code = '403';
+          err.status = 403;
+          throw err;
+        }
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      } else {
+        if (requireAuth) {
+          const err = new Error('AUTH_REQUIRED: Sesi login petugas diperlukan untuk melakukan mutasi data.');
+          err.code = '401';
+          err.status = 401;
+          throw err;
+        }
+        // Hanya untuk kueri baca publik/anonim (SELECT)
+        headers['Authorization'] = `Bearer ${key}`;
+      }
+
+      return headers;
+    }
+
+    function logoutSupabase(showNotification = true) {
+      clearAuthSession();
+      state.operatorName = '';
+      state.isAdminUnlocked = false;
+      applyRoleBasedUIPrivileges(null);
+      renderHeaderAuthBadge();
+      if (showNotification) {
+        showToast('Sesi petugas telah logout. Seluruh akses mutasi data dikunci.', 'info');
+      }
+      refreshAllUI();
+    }
+
+    function applyRoleBasedUIPrivileges(role) {
+      const normRole = (typeof role === 'string' && VALID_OPERATIONAL_ROLES.includes(role.toLowerCase().trim()))
+        ? role.toLowerCase().trim()
+        : null;
+
+      state.currentUserRole = normRole;
+
+      // cashier: transaksi kuota dan registrasi customer
+      // supervisor/admin: transaksi kuota, registrasi, dan gudang
+      // warehouse_admin: gudang saja
+      // null / invalid: seluruh fitur mutasi terkunci (read-only)
+      const canAccessWarehouse = normRole ? ['supervisor', 'warehouse_admin', 'admin'].includes(normRole) : false;
+      state.isAdminUnlocked = canAccessWarehouse;
+
+      renderHeaderAuthBadge();
+    }
+
+    function openLoginModal() {
+      const modal = document.getElementById('modal-auth-login');
+      if (!modal) return;
+      const errBox = document.getElementById('auth-login-error');
+      if (errBox) {
+        errBox.textContent = '';
+        errBox.classList.add('hidden');
+      }
+      modal.classList.remove('hidden');
+      const emailInp = document.getElementById('auth-email-input');
+      if (emailInp) setTimeout(() => emailInp.focus(), 150);
+      safeCreateIcons();
+    }
+
+    function closeLoginModal() {
+      const modal = document.getElementById('modal-auth-login');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function handleAuthLoginSubmit(e) {
+      if (e) e.preventDefault();
+      const emailInp = document.getElementById('auth-email-input');
+      const passInp = document.getElementById('auth-password-input');
+      const remBox = document.getElementById('auth-remember-me');
+      const errBox = document.getElementById('auth-login-error');
+      const submitBtn = document.getElementById('auth-login-submit-btn');
+
+      const email = (emailInp?.value || '').trim();
+      const password = (passInp?.value || '');
+      const remember = Boolean(remBox?.checked);
+
+      if (!email || !password) {
+        if (errBox) {
+          errBox.textContent = 'Harap isi email dan kata sandi.';
+          errBox.classList.remove('hidden');
+        }
+        return;
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Memverifikasi...</span>`;
+        safeCreateIcons();
+      }
+
+      try {
+        const session = await loginWithSupabase(email, password, remember);
+        closeLoginModal();
+        if (passInp) passInp.value = '';
+      } catch (err) {
+        console.warn('Login failure:', err);
+        if (errBox) {
+          errBox.textContent = err.message || 'Gagal login ke Supabase Auth.';
+          errBox.classList.remove('hidden');
+        }
+        showToast(err.message || 'Login gagal. Periksa kredensial Anda.', 'error');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<i data-lucide="log-in" class="w-4 h-4"></i><span>Masuk ke Sistem</span>`;
+          safeCreateIcons();
+        }
+      }
+    }
+
+    function renderHeaderAuthBadge() {
+      const container = document.getElementById('header-auth-control');
+      if (!container) return;
+
+      const session = getAuthSession();
+      if (session && session.access_token) {
+        const roleColors = {
+          cashier: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+          supervisor: 'bg-indigo-50 text-indigo-800 border-indigo-200',
+          warehouse_admin: 'bg-amber-50 text-amber-800 border-amber-200',
+          admin: 'bg-purple-50 text-purple-800 border-purple-200',
+        };
+        const colorCls = session.role ? (roleColors[session.role] || 'bg-slate-100 text-slate-800 border-slate-300') : 'bg-amber-50 text-amber-800 border-amber-300';
+        const roleLabel = session.role ? session.role.toUpperCase() : 'NO ROLE';
+        const emailPrefix = (session.email || 'Petugas').split('@')[0];
+
+        container.innerHTML = `
+          <div class="flex items-center gap-1.5">
+            <div class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold border ${colorCls} shadow-2xs" title="${escapeHtml(session.email)} (${escapeHtml(session.role || 'Tanpa Role Operasional')})">
+              <i data-lucide="${session.role ? 'user-check' : 'user-x'}" class="w-3.5 h-3.5 shrink-0"></i>
+              <span class="max-w-[120px] truncate hidden md:inline">${escapeHtml(emailPrefix)}</span>
+              <span class="px-1 py-0.2 rounded-md bg-white/70 text-[10px] uppercase font-mono tracking-tight">${escapeHtml(roleLabel)}</span>
+            </div>
+            <button
+              type="button"
+              onclick="logoutSupabase(true)"
+              title="Keluar dari akun (${escapeHtml(session.email)})"
+              class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 shadow-2xs transition cursor-pointer"
+            >
+              <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
+              <span class="hidden lg:inline">Logout</span>
+            </button>
+          </div>
+        `;
+      } else {
+        container.innerHTML = `
+          <button
+            type="button"
+            onclick="openLoginModal()"
+            title="Masuk dengan Akun Petugas Supabase Auth"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 text-white shadow-2xs transition cursor-pointer"
+          >
+            <i data-lucide="log-in" class="w-3.5 h-3.5 text-emerald-400"></i>
+            <span>Login Petugas</span>
+          </button>
+        `;
+      }
+      safeCreateIcons();
     }
 
     function updateCloudStatusUI(status, message) {
@@ -10409,9 +11667,11 @@ const INDONESIA_REGIONS = {
       const settingsBadge = document.getElementById('settings-cloud-status-badge');
       const settingsInfo = document.getElementById('settings-cloud-sync-info');
 
-      const dirtyLogs = (state.logs || []).filter((l) => l.is_dirty).length;
-      const dirtyWh = (state.warehouseLogs || []).filter((w) => w.is_dirty).length;
-      const totalDirty = dirtyLogs + dirtyWh;
+      const dirtyLogs = (state.logs || []).filter((l) => l.is_dirty && l.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED').length;
+      const dirtyWh = (state.warehouseLogs || []).filter((w) => w.is_dirty && w.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED').length;
+      const outboxEntries = (typeof OutboxManager !== 'undefined' && OutboxManager.getEntries) ? OutboxManager.getEntries() : [];
+      const pendingOutbox = outboxEntries.filter((e) => e.status !== 'failed_terminal').length;
+      const totalPending = dirtyLogs + dirtyWh + pendingOutbox;
 
       if (cloudStatus === 'syncing') {
         if (badgeHeader) {
@@ -10432,26 +11692,26 @@ const INDONESIA_REGIONS = {
           settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span><span>Menyinkronkan...</span>`;
         }
       } else if (cloudStatus === 'connected') {
-        if (totalDirty > 0) {
+        if (totalPending > 0) {
           if (badgeHeader) {
             badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 shadow-2xs shrink-0 cursor-pointer';
-            badgeHeader.title = `${totalDirty} data tersimpan di perangkat lokal. Klik untuk sinkronkan sekarang.`;
+            badgeHeader.title = message || `${totalPending} data belum berhasil disinkronkan ke cloud. Klik untuk coba lagi.`;
             badgeHeader.innerHTML = `
               <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
                 <path d="M12 9v3.5l1.5 1" stroke="#d97706" stroke-width="1.8"/>
               </svg>
-              <span id="cloud-badge-text" class="hidden sm:inline">${totalDirty} Menunggu</span>
+              <span id="cloud-badge-text" class="hidden sm:inline">${totalPending} Tertunda</span>
             `;
           }
           if (settingsBadge) {
             settingsBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1.5 shrink-0';
-            settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span><span>${totalDirty} Data Belum Sinkron</span>`;
+            settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span><span>${totalPending} Data Belum Sinkron</span>`;
           }
         } else {
           if (badgeHeader) {
             badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-sky-50 text-sky-800 border border-sky-200 hover:bg-sky-100 shadow-2xs shrink-0 cursor-pointer';
-            badgeHeader.title = 'Data tersinkron dengan cloud. Klik untuk sinkronkan manual.';
+            badgeHeader.title = message || 'Data tersinkron dengan cloud. Klik untuk sinkronkan manual.';
             badgeHeader.innerHTML = `
               <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#e0f2fe" stroke="#0284c7" stroke-width="1.8"/>
@@ -10465,10 +11725,28 @@ const INDONESIA_REGIONS = {
             settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><span>Terhubung ke Cloud</span>`;
           }
         }
+      } else if (cloudStatus === 'warning') {
+        const countText = totalPending > 0 ? `${totalPending} Tertunda` : 'Perhatian';
+        if (badgeHeader) {
+          badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 shadow-2xs shrink-0 cursor-pointer';
+          badgeHeader.title = message || `${totalPending} data belum berhasil disinkronkan ke cloud. Klik untuk coba lagi.`;
+          badgeHeader.innerHTML = `
+            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+              <path d="M12 9v3.5l1.5 1" stroke="#d97706" stroke-width="1.8"/>
+            </svg>
+            <span id="cloud-badge-text" class="hidden sm:inline">${countText}</span>
+          `;
+        }
+        if (settingsBadge) {
+          settingsBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1.5 shrink-0';
+          settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span><span>${countText}</span>`;
+        }
       } else {
+        // Mode Lokal (Offline)
         if (badgeHeader) {
           badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 shadow-2xs shrink-0 cursor-pointer';
-          badgeHeader.title = 'Mode Offline / Lokal. Data tersimpan di browser perangkat ini.';
+          badgeHeader.title = message || 'Mode Offline / Lokal. Data tersimpan di browser perangkat ini.';
           badgeHeader.innerHTML = `
             <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
@@ -10489,8 +11767,203 @@ const INDONESIA_REGIONS = {
       safeCreateIcons();
     }
 
+    function enqueueDirtyLocalRecordsToOutbox() {
+      // 1. Pelanggan baru/kotor (register_customer: tepat 9 parameter)
+      // Jangan pernah memasukkan data legacy/demo yang menunggu review manual
+      (state.customers || [])
+        .filter((c) => c.is_dirty && c.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED')
+        .forEach((c) => {
+          const reqId = c.registration_request_id || generateRequestId();
+          c.registration_request_id = reqId;
+          const rpcPayload = {
+            p_request_id: reqId,
+            p_no_kk: c.no_kk,
+            p_member_id: c.member_id || getCustomerFormattedId(c) || generateNextMemberId(c.no_kk),
+            p_nama: c.nama,
+            p_provinsi: c.provinsi || '',
+            p_kabupaten: c.kabupaten || '',
+            p_kecamatan: c.kecamatan || '',
+            p_desa: c.desa || '',
+            p_detail: (c.no_hp && !(c.detail || '').includes(c.no_hp))
+              ? `[WA: ${c.no_hp}] ${c.detail || ''}`.trim()
+              : (c.detail || ''),
+          };
+          assertRpcPayloadContract('register_customer', rpcPayload);
+          OutboxManager.add('register_customer', reqId, rpcPayload);
+        });
+
+      // 2. Transaksi kuota baru/kotor (process_quota_dispense: tepat 14 parameter)
+      // Jangan pernah memasukkan data legacy/demo yang menunggu review manual
+      (state.logs || [])
+        .filter((l) => l.is_dirty && l.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED')
+        .forEach((l) => {
+          const reqId = l.request_id || generateRequestId();
+          l.request_id = reqId;
+          const cust = (state.customers || []).find((c) => c.no_kk === l.no_kk);
+          const memberId = l.member_id || (cust && cust.member_id) || generateNextMemberId(l.no_kk);
+
+          const rpcPayload = {
+            p_request_id: reqId,
+            p_no_kk: l.no_kk,
+            p_nama: l.nama,
+            p_member_id: memberId,
+            p_qty_beras: Number(l.qty_beras) || 0,
+            p_qty_gas: Number(l.qty_gas) || 0,
+            p_tx_date: l.date,
+            p_operator_id: l.operator_id || state.operatorName || 'OPERATOR',
+            p_custom_log_id: l.id || null,
+            p_provinsi: cust ? (cust.provinsi || '') : '',
+            p_kabupaten: cust ? (cust.kabupaten || '') : '',
+            p_kecamatan: cust ? (cust.kecamatan || '') : '',
+            p_desa: cust ? (cust.desa || '') : '',
+            p_detail: cust ? (cust.detail || '') : '',
+          };
+          assertRpcPayloadContract('process_quota_dispense', rpcPayload);
+          OutboxManager.add('process_quota_dispense', reqId, rpcPayload);
+        });
+
+      // 3. Mutasi gudang baru/kotor (process_warehouse_mutation: tepat 8 parameter)
+      // Jangan pernah memasukkan data legacy/demo yang menunggu review manual
+      const session = getAuthSession();
+      const currentRole = session ? session.role : null;
+      if (currentRole && ['supervisor', 'warehouse_admin', 'admin'].includes(currentRole)) {
+        (state.warehouseLogs || [])
+          .filter((w) => w.is_dirty && w.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED' && w.type !== 'GI-WARGA' && w.type !== 'GI-PELANGGAN')
+          .forEach((w) => {
+            const reqId = w.request_id || generateRequestId();
+            w.request_id = reqId;
+            const rpcPayload = {
+              p_request_id: reqId,
+              p_date: w.date,
+              p_type: w.type,
+              p_item: w.item,
+              p_qty: Number(w.qty) || 0,
+              p_ref: w.ref || '',
+              p_operator_id: state.operatorName || 'OPERATOR',
+              p_custom_mutation_id: w.id || null,
+            };
+            assertRpcPayloadContract('process_warehouse_mutation', rpcPayload);
+            OutboxManager.add('process_warehouse_mutation', reqId, rpcPayload);
+          });
+      }
+    }
+
+    async function processOutboxQueue() {
+      const entries = (typeof OutboxManager !== 'undefined' && OutboxManager.getEntries) ? OutboxManager.getEntries() : [];
+      const pendingEntries = entries.filter((e) => e.status !== 'failed_terminal');
+      if (pendingEntries.length === 0) {
+        return { total: 0, success: 0, failed: 0, errors: [] };
+      }
+
+      console.info(`Memproses antrean outbox: ${pendingEntries.length} transaksi tertunda.`);
+      let successCount = 0;
+      let failCount = 0;
+      const errors = [];
+      const session = getAuthSession();
+      const currentRole = session ? session.role : null;
+
+      for (const entry of pendingEntries) {
+        // Cek izin peran khusus mutasi gudang agar akun cashier tidak terbentur 403 berulang
+        if (entry.type === 'process_warehouse_mutation' && (!currentRole || !['supervisor', 'warehouse_admin', 'admin'].includes(currentRole))) {
+          failCount++;
+          errors.push({ id: entry.requestId, type: entry.type, message: 'Menunggu otorisasi admin gudang/supervisor' });
+          continue;
+        }
+
+        // Normalisasi entri outbox warisan jika ada parameter lawas
+        if (entry.type === 'process_quota_dispense' && entry.payload) {
+          if (entry.payload.p_date && !entry.payload.p_tx_date) {
+            entry.payload.p_tx_date = entry.payload.p_date;
+          }
+          const cust = (state.customers || []).find((c) => c.no_kk === entry.payload.p_no_kk);
+          if (entry.payload.p_provinsi === undefined) entry.payload.p_provinsi = cust ? (cust.provinsi || '') : '';
+          if (entry.payload.p_kabupaten === undefined) entry.payload.p_kabupaten = cust ? (cust.kabupaten || '') : '';
+          if (entry.payload.p_kecamatan === undefined) entry.payload.p_kecamatan = cust ? (cust.kecamatan || '') : '';
+          if (entry.payload.p_desa === undefined) entry.payload.p_desa = cust ? (cust.desa || '') : '';
+          if (entry.payload.p_detail === undefined) entry.payload.p_detail = cust ? (cust.detail || '') : '';
+          delete entry.payload.p_nik;
+          delete entry.payload.p_date;
+          delete entry.payload.p_time;
+          delete entry.payload.p_ref;
+          delete entry.payload.p_custom_wh_beras_id;
+          delete entry.payload.p_custom_wh_gas_id;
+        }
+
+        OutboxManager.markInFlight(entry.requestId);
+
+        try {
+          if (entry.type === 'register_customer') {
+            const existingSyncedCust = (state.customers || []).find((c) => c.no_kk === entry.payload.p_no_kk && !c.is_dirty);
+            if (existingSyncedCust) {
+              const pMember = String(entry.payload?.p_member_id || '').trim().toUpperCase();
+              const cMember = String(existingSyncedCust.member_id || '').trim().toUpperCase();
+              const pNama = String(entry.payload?.p_nama || '').trim().toUpperCase();
+              const cNama = String(existingSyncedCust.nama || '').trim().toUpperCase();
+              const isSameIdentity = (
+                (pMember && cMember && pMember === cMember) ||
+                (pNama && cNama && pNama === cNama)
+              );
+              if (isSameIdentity) {
+                console.info(`processPendingOutbox: KK ${entry.payload.p_no_kk} sudah tersinkron di cloud dengan identitas cocok. Menghapus antrean outbox.`);
+                OutboxManager.remove(entry.requestId);
+                successCount++;
+                continue;
+              }
+              console.warn(`processPendingOutbox: Konflik KK ${entry.payload.p_no_kk} (cloud: "${existingSyncedCust.nama}" vs outbox: "${entry.payload?.p_nama}"). Melanjutkan ke RPC agar divalidasi server.`);
+            }
+            const resData = await callRegisterCustomerRPC(entry.payload);
+            const targetCust = (state.customers || []).find((c) => c.no_kk === entry.payload.p_no_kk);
+            if (targetCust) {
+              targetCust.is_dirty = false;
+            } else {
+              const reconstructedCust = {
+                member_id: (resData && resData.customer && resData.customer.member_id) || entry.payload.p_member_id,
+                no_kk: entry.payload.p_no_kk,
+                nama: entry.payload.p_nama,
+                provinsi: entry.payload.p_provinsi || '',
+                kabupaten: entry.payload.p_kabupaten || '',
+                kecamatan: entry.payload.p_kecamatan || '',
+                desa: entry.payload.p_desa || '',
+                detail: entry.payload.p_detail || '',
+                created_at: (entry.metadata && entry.metadata.created_at) || entry.createdAt || new Date().toISOString(),
+                is_dirty: false,
+              };
+              if (entry.metadata && entry.metadata.no_hp) {
+                reconstructedCust.no_hp = entry.metadata.no_hp;
+              }
+              state.customers.unshift(reconstructedCust);
+            }
+          } else if (entry.type === 'process_quota_dispense') {
+            await callProcessQuotaDispenseRPC(entry.payload);
+            const targetLog = (state.logs || []).find((l) => l.request_id === entry.requestId || l.id === entry.payload.p_custom_log_id);
+            if (targetLog) targetLog.is_dirty = false;
+          } else if (entry.type === 'process_warehouse_mutation') {
+            await callProcessWarehouseMutationRPC(entry.payload);
+            const targetWh = (state.warehouseLogs || []).find((w) => w.request_id === entry.requestId || w.id === entry.payload.p_custom_mutation_id);
+            if (targetWh) targetWh.is_dirty = false;
+          }
+          OutboxManager.remove(entry.requestId);
+          successCount++;
+        } catch (err) {
+          failCount++;
+          const isTerminal = isTerminalRpcError(err);
+          OutboxManager.markFailed(entry.requestId, err, isTerminal);
+          errors.push({ id: entry.requestId, type: entry.type, message: err.message || 'Eksekusi RPC gagal', isTerminal });
+          console.warn(`Outbox ${entry.type} [${entry.requestId}] gagal (${isTerminal ? 'TERMINAL' : 'RETRYABLE'}):`, err.message || err.code || err.status);
+        }
+      }
+
+      if (successCount > 0) {
+        persistState();
+      }
+      return { total: pendingEntries.length, success: successCount, failed: failCount, errors };
+    }
+
     async function syncWithSupabase(silent = false) {
-      if (isSyncing) return;
+      if (isSyncing) {
+        console.info('syncWithSupabase: sinkronisasi sedang berlangsung, request baru diabaikan.');
+        return;
+      }
       const { url, key } = getSupabaseConfig();
       if (!url || !key) {
         updateCloudStatusUI('offline', 'Kredensial Supabase belum diatur.');
@@ -10501,65 +11974,38 @@ const INDONESIA_REGIONS = {
       if (!silent) updateCloudStatusUI('syncing', 'Menghubungi database cloud Supabase...');
 
       try {
-        const headers = getSupabaseHeaders(key);
+        const headers = await getSupabaseHeaders(key, false);
 
+        // GET request dengan timeout 10 detik via AbortController
         const [resCust, resLogs, resWh] = await Promise.all([
-          fetch(`${url}/rest/v1/customers?select=*`, { headers }),
-          fetch(`${url}/rest/v1/logs?select=*`, { headers }),
-          fetch(`${url}/rest/v1/warehouse_logs?select=*`, { headers }),
+          fetchWithTimeout(`${url}/rest/v1/customers?select=*`, { headers }, 10000),
+          fetchWithTimeout(`${url}/rest/v1/logs?select=*`, { headers }, 10000),
+          fetchWithTimeout(`${url}/rest/v1/warehouse_logs?select=*`, { headers }, 10000),
         ]);
 
         if (!resCust.ok || !resLogs.ok || !resWh.ok) {
-          throw new Error(`Respon server error: Cust ${resCust.status}, Logs ${resLogs.status}, WH ${resWh.status}`);
+          throw new Error(`Respon server GET error: Cust ${resCust.status}, Logs ${resLogs.status}, WH ${resWh.status}`);
         }
 
         const cloudCust = await resCust.json();
         const cloudLogs = await resLogs.json();
         const cloudWh = await resWh.json();
 
-        // Safeguard STATE-02: Jika cloud kosong tetapi lokal ada data, upload data lokal ke cloud!
-        if (cloudCust.length === 0 && cloudLogs.length === 0 && cloudWh.length === 0) {
-          if (state.customers.length > 0 || state.logs.length > 0 || state.warehouseLogs.length > 0) {
-            await pushAllLocalToSupabase(true);
-            const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-            updateCloudStatusUI('connected', `Sinkron terakhir: Pukul ${timeStr} WIB (${state.customers.length} KK, ${state.logs.length} Transaksi). Diunggah ke Cloud.`);
-            if (!silent) showToast('Data lokal berhasil diunggah ke Database Cloud yang baru.', 'success');
-            isSyncing = false;
-            return;
-          }
-          state.customers = [];
-          state.logs = [];
-          state.warehouseLogs = [];
-          state.doSeqTracker = {};
-          persistState();
-          refreshAllUI();
-          const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-          updateCloudStatusUI('connected', `Sinkron terakhir: Pukul ${timeStr} WIB (0 KK, 0 Transaksi). Database Bersih.`);
-          if (!silent) showToast('Database Cloud kosong bersih (0 data). Data lokal telah diselaraskan.', 'info');
-          isSyncing = false;
-          return;
-        }
-
-        // Safeguard TOMBSTONE: Saring data cloud agar zombie record yang telah dihapus lokal tidak masuk kembali
+        // Rekonsiliasi tombstone lokal jika ada
         const tombstones = getTombstones();
         const tombstoneLogIds = new Set(tombstones.filter((t) => t.type === 'log').map((t) => t.id));
         const tombstoneCustKKs = new Set(tombstones.filter((t) => t.type === 'customer').map((t) => t.id));
         const tombstoneWhIds = new Set(tombstones.filter((t) => t.type === 'wh').map((t) => t.id));
 
-        const validCloudLogs = cloudLogs.filter((l) => !tombstoneLogIds.has(l.id));
-        const validCloudCust = cloudCust.filter((c) => !tombstoneCustKKs.has(c.no_kk));
-        const validCloudWh = cloudWh.filter((w) => !tombstoneWhIds.has(w.id));
+        const validCloudLogs = (cloudLogs || []).filter((l) => !tombstoneLogIds.has(l.id));
+        const validCloudCust = (cloudCust || []).filter((c) => !tombstoneCustKKs.has(c.no_kk));
+        const validCloudWh = (cloudWh || []).filter((w) => !tombstoneWhIds.has(w.id));
 
-        // Safeguard CONFLICT-RESOLUTION (Anti-Lost Update):
-        // Transaksi lokal dengan is_dirty === true MEMENANGKAN KONFLIK atas data cloud
-        const cloudLogIds = new Set(validCloudLogs.map((l) => l.id));
-        const cloudWhIds = new Set(validCloudWh.map((w) => w.id));
-        const cloudKKs = new Set(validCloudCust.map((c) => c.no_kk));
-
+        // Rekonsiliasi data: Data lokal yang ditandai is_dirty memenangkan konflik atas data cloud
         // 1. RECONCILE LOGS
         const dirtyLocalLogsMap = new Map();
         const nonDirtyLocalLogsMap = new Map();
-        state.logs.forEach((l) => {
+        (state.logs || []).forEach((l) => {
           if (tombstoneLogIds.has(l.id)) return;
           if (l.is_dirty) {
             dirtyLocalLogsMap.set(l.id, l);
@@ -10572,7 +12018,6 @@ const INDONESIA_REGIONS = {
         validCloudLogs.forEach((l) => {
           const logId = l.id;
           if (dirtyLocalLogsMap.has(logId)) {
-            // Local dirty WINS over cloud data
             mergedLogsMap.set(logId, dirtyLocalLogsMap.get(logId));
           } else {
             mergedLogsMap.set(logId, {
@@ -10590,21 +12035,17 @@ const INDONESIA_REGIONS = {
           }
         });
         dirtyLocalLogsMap.forEach((l, id) => {
-          if (!mergedLogsMap.has(id)) {
-            mergedLogsMap.set(id, l);
-          }
+          if (!mergedLogsMap.has(id)) mergedLogsMap.set(id, l);
         });
         nonDirtyLocalLogsMap.forEach((l, id) => {
-          if (!mergedLogsMap.has(id)) {
-            mergedLogsMap.set(id, l);
-          }
+          if (!mergedLogsMap.has(id)) mergedLogsMap.set(id, l);
         });
         state.logs = Array.from(mergedLogsMap.values());
 
         // 2. RECONCILE WAREHOUSE LOGS
         const dirtyLocalWhMap = new Map();
         const nonDirtyLocalWhMap = new Map();
-        state.warehouseLogs.forEach((w) => {
+        (state.warehouseLogs || []).forEach((w) => {
           if (tombstoneWhIds.has(w.id)) return;
           if (w.is_dirty) {
             dirtyLocalWhMap.set(w.id, w);
@@ -10617,7 +12058,6 @@ const INDONESIA_REGIONS = {
         validCloudWh.forEach((w) => {
           const whId = w.id;
           if (dirtyLocalWhMap.has(whId)) {
-            // Local dirty WINS over cloud data
             mergedWhMap.set(whId, dirtyLocalWhMap.get(whId));
           } else {
             mergedWhMap.set(whId, {
@@ -10634,363 +12074,511 @@ const INDONESIA_REGIONS = {
           }
         });
         dirtyLocalWhMap.forEach((w, id) => {
-          if (!mergedWhMap.has(id)) {
-            mergedWhMap.set(id, w);
-          }
+          if (!mergedWhMap.has(id)) mergedWhMap.set(id, w);
         });
         nonDirtyLocalWhMap.forEach((w, id) => {
-          if (!mergedWhMap.has(id)) {
-            mergedWhMap.set(id, w);
-          }
+          if (!mergedWhMap.has(id)) mergedWhMap.set(id, w);
         });
         state.warehouseLogs = Array.from(mergedWhMap.values());
 
         // 3. RECONCILE CUSTOMERS
-        const unsyncedLocalCust = state.customers.filter((c) => !cloudKKs.has(c.no_kk) && !tombstoneCustKKs.has(c.no_kk));
+        const cloudKKs = new Set(validCloudCust.map((c) => c.no_kk));
+        const unsyncedLocalCust = (state.customers || []).filter((c) => !cloudKKs.has(c.no_kk) && !tombstoneCustKKs.has(c.no_kk));
         state.customers = [...unsyncedLocalCust, ...validCloudCust];
 
         persistState();
         refreshAllUI();
 
-        // 4. Dorong tombstone penghapusan tertunda ke cloud
-        for (const t of tombstones) {
-          if (t.type === 'log') deleteLogFromSupabase(t.id).catch(() => {});
-          if (t.type === 'customer') deleteCustomerFromSupabase(t.id).catch(() => {});
-          if (t.type === 'wh') deleteWarehouseMutationFromSupabase(t.id).catch(() => {});
+        // 4. Bersihkan tombstone lokal
+        if (tombstones.length > 0) {
+          localStorage.removeItem(TOMBSTONE_STORAGE_KEY);
         }
 
-        // 5. Dorong transaksi lokal yang sedang kotor (dirty / unsynced) ke cloud
-        for (const c of unsyncedLocalCust) {
-          pushSingleCustomerToSupabase(c).catch(() => {});
-        }
+        // 5. Proses antrean Outbox eksplisit (tanpa otomatis mengunggah data legacy/demo lokal)
+        const outboxStats = await processOutboxQueue();
 
-        const dirtyLogsToSend = state.logs.filter((l) => l.is_dirty);
-        if (dirtyLogsToSend.length > 0) {
-          await Promise.allSettled(dirtyLogsToSend.map(async (l) => {
-            const isExistingOnCloud = cloudLogIds.has(l.id);
-            try {
-              if (isExistingOnCloud) {
-                await updateLogOnSupabase(l);
-              } else {
-                await pushSingleLogToSupabase(l);
-              }
-            } catch (err) {
-              if (err && err.message && (err.message.includes('Pelanggaran Kuota') || err.message.includes('chk_') || err.message.includes('Server menolak'))) {
-                state.logs = state.logs.filter((item) => item.id !== l.id);
-                state.warehouseLogs = state.warehouseLogs.filter((w) => w.logId !== l.id);
-                persistState();
-              }
-            }
-          }));
-          refreshAllUI();
-        }
-
-        const dirtyWhToSend = state.warehouseLogs.filter((w) => w.is_dirty);
-        if (dirtyWhToSend.length > 0) {
-          await Promise.allSettled(dirtyWhToSend.map((w) => pushWarehouseMutationToSupabase(w).catch(() => {})));
-        }
-
+        // 7. Evaluasi status UI akhir
+        const remainingPending = OutboxManager.getEntries().filter((e) => e.status !== 'failed_terminal').length;
         const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-        updateCloudStatusUI('connected', `Sinkron terakhir: Pukul ${timeStr} WIB (${state.customers.length} KK, ${state.logs.length} Transaksi).`);
-        if (!silent) {
-          showToast(`Sinkronisasi Supabase Cloud berhasil! (${state.customers.length} KK, ${state.logs.length} Riwayat).`, 'success');
+
+        if (outboxStats.failed > 0 || remainingPending > 0) {
+          const failCount = outboxStats.failed || remainingPending;
+          updateCloudStatusUI('warning', `Sinkron parsial pukul ${timeStr} WIB: ${failCount} item outbox tertunda.`);
+          if (!silent) {
+            showToast(`Data cloud terbaca (${cloudCust.length} KK, ${cloudLogs.length} Riwayat), namun ${failCount} item transaksi tertunda di outbox.`, 'warning');
+          }
+        } else {
+          updateCloudStatusUI('connected', `Sinkron terakhir: Pukul ${timeStr} WIB (${state.customers.length} KK, ${state.logs.length} Riwayat).`);
+          if (!silent) {
+            showToast(`Sinkronisasi berhasil! Cloud aktif (${state.customers.length} KK, ${state.logs.length} Riwayat).`, 'success');
+          }
         }
       } catch (err) {
-        console.warn('Supabase sync warning:', err);
-        updateCloudStatusUI('offline', `Gagal koneksi cloud: ${err.message || 'Periksa koneksi internet'}`);
+        console.warn('Supabase sync warning:', err.message || err.code || err.status);
+        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+        updateCloudStatusUI('offline', `Gagal koneksi cloud (${timeStr} WIB): ${err.message || 'Periksa koneksi'}`);
         if (!silent) {
-          showToast('Koneksi ke Supabase terganggu, tetap menggunakan data lokal.', 'warning');
+          showToast(`Koneksi ke Supabase terganggu: ${err.message || 'Periksa koneksi internet'}`, 'warning');
         }
       } finally {
         isSyncing = false;
+        refreshAllUI();
       }
     }
 
     async function pushAllLocalToSupabase(silent = false) {
+      if (isSyncing) {
+        console.info('pushAllLocalToSupabase: sinkronisasi sedang berlangsung, permintaan diabaikan.');
+        return;
+      }
       const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
+      if (!url || !key) {
+        updateCloudStatusUI('offline', 'Kredensial Supabase belum diatur.');
+        return;
+      }
 
       isSyncing = true;
-      updateCloudStatusUI('syncing', 'Mengunggah seluruh data lokal ke Supabase...');
+      updateCloudStatusUI('syncing', 'Mengunggah data lokal melalui RPC berotorisasi...');
 
       try {
-        const headers = {
-          ...getSupabaseHeaders(key),
-          'Prefer': 'resolution=merge-duplicates',
-        };
+        enqueueDirtyLocalRecordsToOutbox();
+        const outboxStats = await processOutboxQueue();
+        const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
-        if (state.customers.length > 0) {
-          const custPayload = state.customers.map((c) => ({
-            member_id: getCustomerFormattedId(c),
-            no_kk: c.no_kk,
-            nama: c.nama,
-            provinsi: c.provinsi || '',
-            kabupaten: c.kabupaten || '',
-            kecamatan: c.kecamatan || '',
-            desa: c.desa || '',
-            detail: c.detail || '',
-          }));
-          await fetch(`${url}/rest/v1/customers`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(custPayload),
-          });
-        }
-
-        if (state.logs.length > 0) {
-          const logsPayload = state.logs.map((l) => ({
-            id: l.id,
-            date: l.date,
-            time: l.time || '12:00',
-            no_kk: l.no_kk,
-            nama: l.nama,
-            qty_beras: Number(l.qty_beras) || 0,
-            qty_gas: Number(l.qty_gas) || 0,
-            total_pcs: Number(l.total_pcs) || 0,
-            revisi_note: l.revisi_note || '',
-          }));
-          await fetch(`${url}/rest/v1/logs`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(logsPayload),
-          });
-        }
-
-        if (state.warehouseLogs.length > 0) {
-          const whPayload = state.warehouseLogs.map((w) => ({
-            id: w.id,
-            date: w.date,
-            type: w.type,
-            item: w.item,
-            qty: Number(w.qty) || 0,
-            ref: w.ref || '',
-            log_id: w.logId || null,
-          }));
-          await fetch(`${url}/rest/v1/warehouse_logs`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(whPayload),
-          });
-        }
-
-        updateCloudStatusUI('connected', 'Semua data lokal berhasil diunggah ke Cloud Supabase.');
-        if (!silent) {
-          showToast('Seluruh data lokal berhasil disimpan ke cloud Supabase!', 'success');
+        if (outboxStats.failed > 0) {
+          updateCloudStatusUI('warning', `Upload selesai dengan catatan: ${outboxStats.failed} item gagal/tertunda.`);
+          if (!silent) {
+            showToast(`${outboxStats.success} berhasil diunggah, ${outboxStats.failed} item tertunda di outbox.`, 'warning');
+          }
+        } else {
+          updateCloudStatusUI('connected', `Semua data lokal berhasil disinkronkan (${outboxStats.success} item). Pukul ${timeStr} WIB.`);
+          if (!silent) {
+            showToast(`Seluruh transaksi lokal (${outboxStats.success} item) berhasil disimpan ke cloud!`, 'success');
+          }
         }
       } catch (err) {
-        console.error('Failed to push to Supabase:', err);
-        updateCloudStatusUI('offline', `Gagal upload: ${err.message}`);
+        console.warn('Gagal pushAllLocalToSupabase:', err.message || err.code);
+        updateCloudStatusUI('warning', `Gagal upload: ${err.message || 'Koneksi terganggu'}`);
         if (!silent) {
-          showToast(`Gagal mengunggah data: ${err.message}`, 'error');
+          showToast(`Gagal mengunggah data: ${err.message || 'Periksa koneksi'}`, 'warning');
         }
       } finally {
         isSyncing = false;
+        refreshAllUI();
       }
     }
 
     async function pushSingleCustomerToSupabase(customer) {
+      if (!customer || !customer.no_kk) return;
       const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      // Proteksi modifikasi master: register_customer khusus registrasi baru
+      const isExistingMaster = state.customers.some((c) => c.no_kk === customer.no_kk && c !== customer);
+      if (isExistingMaster) {
+        const msg = 'Peringatan: Modifikasi data master KK di Cloud dinonaktifkan untuk melindungi integritas jejak audit. Perubahan profil memerlukan RPC otorisasi khusus.';
+        console.warn(msg);
+        showToast(msg, 'warning');
+        return;
+      }
+
+      const requestId = customer.registration_request_id || generateRequestId();
+      customer.registration_request_id = requestId;
+
+      const rpcPayload = {
+        p_request_id: requestId,
+        p_no_kk: customer.no_kk,
+        p_member_id: customer.member_id || getCustomerFormattedId(customer) || generateNextMemberId(customer.no_kk),
+        p_nama: customer.nama,
+        p_provinsi: customer.provinsi || '',
+        p_kabupaten: customer.kabupaten || '',
+        p_kecamatan: customer.kecamatan || '',
+        p_desa: customer.desa || '',
+        p_detail: (customer.no_hp && !(customer.detail || '').includes(customer.no_hp))
+          ? `[WA: ${customer.no_hp}] ${customer.detail || ''}`.trim()
+          : (customer.detail || ''),
+      };
+
+      OutboxManager.add('register_customer', requestId, rpcPayload, {
+        no_kk: customer.no_kk,
+        nama: customer.nama,
+        member_id: customer.member_id,
+        provinsi: customer.provinsi,
+        kabupaten: customer.kabupaten,
+        kecamatan: customer.kecamatan,
+        desa: customer.desa,
+        detail: customer.detail,
+        no_hp: customer.no_hp,
+        created_at: customer.created_at || new Date().toISOString(),
+      });
+      OutboxManager.markInFlight(requestId);
+
       try {
-        await fetch(`${url}/rest/v1/customers`, {
-          method: 'POST',
-          headers: { ...getSupabaseHeaders(key), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify([{
-            member_id: customer.member_id,
-            no_kk: customer.no_kk,
-            nama: customer.nama,
-            provinsi: customer.provinsi || '',
-            kabupaten: customer.kabupaten || '',
-            kecamatan: customer.kecamatan || '',
-            desa: customer.desa || '',
-            detail: (customer.no_hp && !(customer.detail || '').includes(customer.no_hp))
-              ? `[WA: ${customer.no_hp}] ${customer.detail || ''}`.trim()
-              : (customer.detail || ''),
-          }]),
-        });
-      } catch (e) {
-        console.warn('Async push customer failed:', e);
+        const resData = await callRegisterCustomerRPC(rpcPayload);
+
+        // Terkonfirmasi sukses atau idempotent replay
+        OutboxManager.remove(requestId);
+        customer.is_dirty = false;
+        if (resData && resData.customer && resData.customer.member_id) {
+          customer.member_id = resData.customer.member_id;
+        }
+        const targetCust = state.customers.find((c) => c.no_kk === customer.no_kk);
+        if (targetCust) {
+          targetCust.is_dirty = false;
+          if (customer.member_id) targetCust.member_id = customer.member_id;
+        }
+        persistState();
+        return resData;
+      } catch (err) {
+        console.warn('Register customer RPC failed:', err);
+        const isTerminal = isTerminalRpcError(err);
+        OutboxManager.markFailed(requestId, err, isTerminal);
+        throw err;
       }
     }
 
     async function deleteCustomerFromSupabase(noKK) {
-      const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
-      try {
-        await fetch(`${url}/rest/v1/customers?no_kk=eq.${noKK}`, {
-          method: 'DELETE',
-          headers: getSupabaseHeaders(key),
-        });
-      } catch (e) {
-        console.warn('Async delete customer failed:', e);
+      // Direct DELETE /rest/v1/customers dinonaktifkan permanen demi perlindungan jejak audit.
+      console.info(`deleteCustomerFromSupabase: Penghapusan cloud untuk KK ${noKK} dinonaktifkan demi perlindungan jejak audit.`);
+      removeTombstone('customer', noKK);
+    }
+
+    function mapRpcResponseToUserMessage(code, rawMessage) {
+      switch (code) {
+        case 'P0001':
+          return 'Batas kuota Beras terlampaui! Warga telah mencapai batas maksimal 5 sak dalam 30 hari terakhir.';
+        case 'P0002':
+          return 'Batas kuota Gas terlampaui! Warga telah mencapai batas maksimal 5 tabung LPG dalam 30 hari terakhir.';
+        case 'P0003':
+          return 'Stok fisik Beras di gudang tidak mencukupi untuk memenuhi transaksi ini. Silakan catat penerimaan barang (GR) terlebih dahulu.';
+        case 'P0004':
+          return 'Stok fisik Gas LPG di gudang tidak mencukupi untuk memenuhi transaksi ini. Silakan catat penerimaan barang (GR) terlebih dahulu.';
+        case 'P0005':
+          return 'Gagal memproses: ID Transaksi (request_id) wajib disertakan dan tidak boleh kosong.';
+        case 'P0006':
+          return 'Validasi data gagal: Parameter input, nomor KK, atau tipe mutasi tidak valid.';
+        case 'P0007':
+          return 'Jumlah barang tidak valid: Kuantitas per transaksi harus berupa bilangan bulat positif yang valid.';
+        case 'P0008':
+          return 'Jumlah pengambilan minimal adalah 1 pcs barang (Beras atau Gas).';
+        case 'P0009':
+          return 'Konflik Idempotensi: ID Transaksi (request_id) sudah pernah digunakan dengan rincian data yang berbeda!';
+        case 'P0013':
+          return 'Saldo awal (INITIAL-STOCK) untuk komoditas ini sudah pernah didaftarkan. Penambahan stok fisik wajib menggunakan penerimaan barang (GR).';
+        case 'P0014':
+          return 'Konflik Identitas Pelanggan: Nomor KK terdaftar atas nama atau ID Member yang berbeda. Perubahan profil memerlukan RPC otorisasi khusus.';
+        case '42501':
+          return 'Akses Ditolak (42501): Sesi atau peran login Anda tidak memiliki wewenang untuk mengeksekusi operasi ini.';
+        case '401':
+          return 'Sesi tidak terautentikasi (401). Silakan periksa kredensial login atau token akses Anda.';
+        case '403':
+          return 'Akses Ditolak (403): Peran pengguna tidak memiliki hak untuk mengeksekusi operasi ini.';
+        default:
+          if (rawMessage && rawMessage.includes('QUOTA_LIMIT_EXCEEDED')) {
+            return 'Batas kuota sembako terlampaui dalam siklus 30 hari.';
+          }
+          if (rawMessage && rawMessage.includes('STOCK_DEFICIT')) {
+            return 'Stok fisik di gudang tidak mencukupi untuk transaksi ini.';
+          }
+          if (rawMessage && rawMessage.includes('IDEMPOTENCY_CONFLICT')) {
+            return 'Konflik Idempotensi: Request ID telah terpakai dengan payload berbeda!';
+          }
+          if (rawMessage && rawMessage.includes('CUSTOMER_CONFLICT')) {
+            return 'Konflik Identitas Pelanggan: Nomor KK terdaftar dengan identitas berbeda.';
+          }
+          if (rawMessage && rawMessage.includes('INITIAL_STOCK_LOCKED')) {
+            return 'Saldo awal komoditas ini sudah pernah dicatat sebelumnya.';
+          }
+          return rawMessage || 'Terjadi penolakan transaksi oleh basis data cloud.';
       }
+    }
+
+    async function callProcessQuotaDispenseRPC(payload) {
+      assertRpcPayloadContract('process_quota_dispense', payload);
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      const headers = await getSupabaseHeaders(key, true);
+      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_quota_dispense`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }, 15000);
+
+      if (!res.ok) {
+        let errData = {};
+        try {
+          errData = await res.json();
+        } catch (e) {
+          errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+        }
+        const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
+        const err = new Error(userMsg);
+        err.code = errData.code;
+        err.details = errData.details;
+        err.status = res.status;
+        throw err;
+      }
+
+      return await res.json();
+    }
+
+    async function callRegisterCustomerRPC(payload) {
+      assertRpcPayloadContract('register_customer', payload);
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      const headers = await getSupabaseHeaders(key, true);
+      let res;
+      try {
+        res = await fetchWithTimeout(`${url}/rest/v1/rpc/register_customer`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }, 15000);
+      } catch (fetchErr) {
+        const isTimeout = fetchErr.code === 'ETIMEDOUT' ||
+          fetchErr.status === 408 ||
+          fetchErr.name === 'TimeoutError' ||
+          (fetchErr.message && fetchErr.message.includes('timeout'));
+
+        if (isTimeout && payload && payload.p_no_kk) {
+          try {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            const verifyHeaders = await getSupabaseHeaders(key, false);
+            const verifyRes = await fetchWithTimeout(
+              `${url}/rest/v1/customers?no_kk=eq.${encodeURIComponent(payload.p_no_kk)}&select=*`,
+              { headers: verifyHeaders },
+              5000
+            );
+            if (verifyRes.ok) {
+              const existingCloudCusts = await verifyRes.json();
+              if (Array.isArray(existingCloudCusts) && existingCloudCusts.length > 0) {
+                const cloudCust = existingCloudCusts[0];
+                const pMember = String(payload.p_member_id || '').trim().toUpperCase();
+                const cMember = String(cloudCust.member_id || '').trim().toUpperCase();
+                const pNama = String(payload.p_nama || '').trim().toUpperCase();
+                const cNama = String(cloudCust.nama || '').trim().toUpperCase();
+                const isSameIdentity = (
+                  (pMember && cMember && pMember === cMember) ||
+                  (pNama && cNama && pNama === cNama)
+                );
+
+                if (isSameIdentity) {
+                  console.info('callRegisterCustomerRPC: False-timeout terdeteksi. Pelanggan terverifikasi cocok di cloud:', cloudCust.no_kk);
+                  return {
+                    status: 'SUCCESS',
+                    is_idempotent_replay: true,
+                    message: 'Data pelanggan berhasil diverifikasi di basis data cloud (rekonsiliasi timeout)',
+                    customer: cloudCust,
+                  };
+                }
+
+                const conflictErr = new Error(
+                  `Konflik pendaftaran: No. KK ${payload.p_no_kk} sudah terdaftar di cloud atas nama "${cloudCust.nama || 'LAIN'}".`
+                );
+                conflictErr.code = '23505';
+                conflictErr.status = 409;
+                conflictErr.isIdentityConflict = true;
+                throw conflictErr;
+              }
+            }
+          } catch (verifyErr) {
+            if (verifyErr && verifyErr.isIdentityConflict) {
+              throw verifyErr;
+            }
+            console.warn('Verifikasi status cloud pasca-timeout gagal:', verifyErr.message || verifyErr);
+          }
+        }
+        throw fetchErr;
+      }
+
+      if (!res.ok) {
+        let errData = {};
+        try {
+          errData = await res.json();
+        } catch (e) {
+          errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+        }
+        const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
+        const err = new Error(userMsg);
+        err.code = errData.code;
+        err.details = errData.details;
+        err.status = res.status;
+        throw err;
+      }
+
+      return await res.json();
+    }
+
+    async function callProcessWarehouseMutationRPC(payload) {
+      assertRpcPayloadContract('process_warehouse_mutation', payload);
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      const headers = await getSupabaseHeaders(key, true);
+      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_warehouse_mutation`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }, 15000);
+
+      if (!res.ok) {
+        let errData = {};
+        try {
+          errData = await res.json();
+        } catch (e) {
+          errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+        }
+        const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
+        const err = new Error(userMsg);
+        err.code = errData.code;
+        err.details = errData.details;
+        err.status = res.status;
+        throw err;
+      }
+
+      return await res.json();
     }
 
     async function pushSingleLogToSupabase(logEntry) {
       const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
+      if (!url || !key || !logEntry) return;
+
+      const requestId = logEntry.request_id || generateRequestId();
+      logEntry.request_id = requestId;
+
+      const cust = state.customers.find((c) => c.no_kk === logEntry.no_kk);
+      const memberId = logEntry.member_id ||
+        (cust?.member_id) ||
+        generateNextMemberId(logEntry.no_kk);
+
+      const rpcPayload = {
+        p_request_id: requestId,
+        p_no_kk: logEntry.no_kk,
+        p_nama: logEntry.nama,
+        p_member_id: memberId,
+        p_qty_beras: Number(logEntry.qty_beras) || 0,
+        p_qty_gas: Number(logEntry.qty_gas) || 0,
+        p_tx_date: logEntry.date,
+        p_operator_id: logEntry.operator_id || state.operatorName || 'OPERATOR',
+        p_custom_log_id: logEntry.id,
+        p_provinsi: cust ? (cust.provinsi || '') : '',
+        p_kabupaten: cust ? (cust.kabupaten || '') : '',
+        p_kecamatan: cust ? (cust.kecamatan || '') : '',
+        p_desa: cust ? (cust.desa || '') : '',
+        p_detail: cust ? (cust.detail || '') : '',
+      };
+
+      OutboxManager.add('process_quota_dispense', requestId, rpcPayload);
+      OutboxManager.markInFlight(requestId);
+
       try {
-        // Coba RPC Prosedur Atomik (Atomic Locking) jika tersedia
-        const rpcRes = await fetch(`${url}/rest/v1/rpc/process_quota_purchase`, {
-          method: 'POST',
-          headers: getSupabaseHeaders(key),
-          body: JSON.stringify({
-            p_log_id: logEntry.id,
-            p_no_kk: logEntry.no_kk,
-            p_nama: logEntry.nama,
-            p_qty_beras: Number(logEntry.qty_beras) || 0,
-            p_qty_gas: Number(logEntry.qty_gas) || 0,
-          }),
-        });
+        const resData = await callProcessQuotaDispenseRPC(rpcPayload);
 
-        if (rpcRes.ok) {
-          logEntry.is_dirty = false;
-          const found = state.logs.find((l) => l.id === logEntry.id);
-          if (found) found.is_dirty = false;
-          persistState();
-          return;
-        }
-
-        // Fallback ke REST API standar
-        const restSignal = (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) ? AbortSignal.timeout(8000) : undefined;
-        const res = await fetch(`${url}/rest/v1/logs`, {
-          method: 'POST',
-          headers: { ...getSupabaseHeaders(key), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify([{
-            id: logEntry.id,
-            date: logEntry.date,
-            time: logEntry.time || '12:00',
-            no_kk: logEntry.no_kk,
-            nama: logEntry.nama,
-            qty_beras: Number(logEntry.qty_beras) || 0,
-            qty_gas: Number(logEntry.qty_gas) || 0,
-            total_pcs: Number(logEntry.total_pcs) || 0,
-            revisi_note: logEntry.revisi_note || '',
-          }]),
-          signal: restSignal,
-        });
-
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.message || `Server menolak transaksi (HTTP ${res.status})`);
-        }
+        OutboxManager.remove(requestId);
         logEntry.is_dirty = false;
         const found = state.logs.find((l) => l.id === logEntry.id);
         if (found) found.is_dirty = false;
+
+        // Mutasi gudang GI-WARGA dibuat otomatis oleh RPC di server. Tandai lokal juga sinkron.
+        const whEntries = state.warehouseLogs.filter((w) => w.logId === logEntry.id);
+        for (const w of whEntries) {
+          w.is_dirty = false;
+        }
+
         persistState();
+        return resData;
       } catch (e) {
-        console.warn('Async push log failed:', e);
+        console.warn('Process quota dispense RPC failed:', e);
+        const isTerminal = isTerminalRpcError(e);
+        OutboxManager.markFailed(requestId, e, isTerminal);
         throw e;
       }
     }
 
     async function deleteLogFromSupabase(logId) {
-      const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
-      try {
-        const res = await fetch(`${url}/rest/v1/logs?id=eq.${encodeURIComponent(logId)}`, {
-          method: 'DELETE',
-          headers: getSupabaseHeaders(key),
-        });
-        await fetch(`${url}/rest/v1/warehouse_logs?log_id=eq.${encodeURIComponent(logId)}`, {
-          method: 'DELETE',
-          headers: getSupabaseHeaders(key),
-        });
-        await fetch(`${url}/rest/v1/warehouse_logs?id=in.(WH-GI-${encodeURIComponent(logId)}-BERAS,WH-GI-${encodeURIComponent(logId)}-GAS)`, {
-          method: 'DELETE',
-          headers: getSupabaseHeaders(key),
-        });
-        if (res.ok) {
-          removeTombstone('log', logId);
-          removeTombstone('wh', `WH-GI-${logId}-BERAS`);
-          removeTombstone('wh', `WH-GI-${logId}-GAS`);
-        }
-      } catch (e) {
-        console.warn('Async delete log failed:', e);
-      }
+      // Direct DELETE /rest/v1/logs & warehouse_logs dinonaktifkan permanen demi integritas buku besar.
+      console.info(`deleteLogFromSupabase: Penghapusan cloud untuk Log ${logId} dinonaktifkan demi perlindungan audit trail.`);
+      removeTombstone('log', logId);
+      removeTombstone('wh', `WH-GI-${logId}-BERAS`);
+      removeTombstone('wh', `WH-GI-${logId}-GAS`);
     }
 
     async function updateLogOnSupabase(log) {
-      if (!log || !log.id) return;
-      const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
-      try {
-        const headers = getSupabaseHeaders(key);
-        const patchRes = await fetch(`${url}/rest/v1/logs?id=eq.${encodeURIComponent(log.id)}`, {
-          method: 'PATCH',
-          headers,
-          body: JSON.stringify({
-            qty_beras: Number(log.qty_beras) || 0,
-            qty_gas: Number(log.qty_gas) || 0,
-            total_pcs: Number(log.total_pcs) || 0,
-            revisi_note: log.revisi_note || '',
-          }),
-        });
-
-        if (!patchRes.ok) {
-          throw new Error(`PATCH log failed: HTTP ${patchRes.status}`);
-        }
-        log.is_dirty = false;
-        const targetLog = state.logs.find((l) => l.id === log.id);
-        if (targetLog) targetLog.is_dirty = false;
-
-        // Upsert entri mutasi gudang deterministik (termasuk qty: 0 / is_void jika item dibatalkan)
-        const whEntries = state.warehouseLogs.filter((w) => w.logId === log.id);
-        for (const w of whEntries) {
-          await pushWarehouseMutationToSupabase(w);
-        }
-        persistState();
-      } catch (e) {
-        console.warn('Update log on Supabase failed:', e);
-        throw e;
-      }
+      // Direct PATCH /rest/v1/logs dinonaktifkan permanen demi integritas buku besar.
+      console.warn('updateLogOnSupabase: Modifikasi catatan transaksi di Cloud dinonaktifkan demi perlindungan audit trail.');
+      throw new Error('Modifikasi catatan transaksi di Cloud dinonaktifkan demi perlindungan audit trail.');
     }
 
     async function pushWarehouseMutationToSupabase(whEntry) {
+      if (!whEntry || whEntry.type === 'GI-WARGA' || whEntry.type === 'GI-PELANGGAN') {
+        return;
+      }
       const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
+      const supportedTypes = ['INITIAL-STOCK', 'GR', 'GI-MANUAL'];
+      const cleanType = String(whEntry.type || '').toUpperCase().trim();
+      if (!supportedTypes.includes(cleanType)) {
+        throw new Error(`Tipe mutasi "${cleanType}" tidak didukung via RPC Fase-3. Hanya INITIAL-STOCK, GR, dan GI-MANUAL yang diizinkan.`);
+      }
+
+      const requestId = whEntry.request_id || generateRequestId();
+      whEntry.request_id = requestId;
+
+      const rpcPayload = {
+        p_request_id: requestId,
+        p_date: whEntry.date,
+        p_type: cleanType,
+        p_item: String(whEntry.item || '').toLowerCase().trim(),
+        p_qty: Number(whEntry.qty) || 0,
+        p_ref: whEntry.ref || '',
+        p_operator_id: state.operatorName || 'OPERATOR',
+        p_custom_mutation_id: whEntry.id || null,
+      };
+
+      OutboxManager.add('process_warehouse_mutation', requestId, rpcPayload);
+      OutboxManager.markInFlight(requestId);
+
       try {
-        const res = await fetch(`${url}/rest/v1/warehouse_logs`, {
-          method: 'POST',
-          headers: { ...getSupabaseHeaders(key), 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify([{
-            id: whEntry.id,
-            date: whEntry.date,
-            type: whEntry.type,
-            item: whEntry.item,
-            qty: Number(whEntry.qty) || 0,
-            ref: whEntry.ref || '',
-            log_id: whEntry.logId || null,
-          }]),
-        });
-        if (res.ok) {
-          whEntry.is_dirty = false;
-          const targetWh = state.warehouseLogs.find((w) => w.id === whEntry.id);
-          if (targetWh) targetWh.is_dirty = false;
-          persistState();
-        }
-      } catch (e) {
-        console.warn('Async push warehouse mutation failed:', e);
+        const resData = await callProcessWarehouseMutationRPC(rpcPayload);
+
+        OutboxManager.remove(requestId);
+        whEntry.is_dirty = false;
+        const targetWh = state.warehouseLogs.find((w) => w.id === whEntry.id);
+        if (targetWh) targetWh.is_dirty = false;
+        persistState();
+        return resData;
+      } catch (err) {
+        console.warn('Process warehouse mutation RPC failed:', err);
+        const isTerminal = isTerminalRpcError(err);
+        OutboxManager.markFailed(requestId, err, isTerminal);
+        throw err;
       }
     }
 
     async function deleteWarehouseMutationFromSupabase(id) {
-      const { url, key } = getSupabaseConfig();
-      if (!url || !key) return;
-      try {
-        await fetch(`${url}/rest/v1/warehouse_logs?id=eq.${id}`, {
-          method: 'DELETE',
-          headers: getSupabaseHeaders(key),
-        });
-      } catch (e) {
-        console.warn('Async delete warehouse mutation failed:', e);
-      }
+      // Direct DELETE /rest/v1/warehouse_logs dinonaktifkan permanen demi integritas saldo stok fisik.
+      console.info(`deleteWarehouseMutationFromSupabase: Penghapusan cloud untuk mutasi ${id} dinonaktifkan demi perlindungan audit saldo stok.`);
+      removeTombstone('wh', id);
     }
 
     // =========================================================================
     // 18. INISIALISASI APLIKASI & PENDAFTARAN GLOBAL HANDLER
     // =========================================================================
     function refreshAllUI() {
+      renderHeaderAuthBadge();
       updateHeaderAndBadges();
       updateResponsiveLayoutContainers();
       renderRecordTab();
@@ -11097,6 +12685,13 @@ const INDONESIA_REGIONS = {
       toggleSettingsPinVisibility,
       lockAppSession,
       checkAuthGate,
+      openLoginModal,
+      closeLoginModal,
+      handleAuthLoginSubmit,
+      loginWithSupabase,
+      logoutSupabase,
+      generateRequestId,
+      OutboxManager,
     });
 
     
@@ -11277,37 +12872,75 @@ const INDONESIA_REGIONS = {
       refreshAllUI();
       closeEditCustomerModal();
 
-      // Push update to Supabase Cloud
-      pushSingleCustomerToSupabase(cust);
-      showToast(`Data KK ${cust.nama} berhasil diperbarui!`, 'success');
+      const { url: urlEditCust, key: keyEditCust } = getSupabaseConfig();
+      if (urlEditCust && keyEditCust) {
+        showToast(`Data KK ${cust.nama} diperbarui di penyimpanan lokal. Perhatian: Modifikasi master di Cloud dinonaktifkan tanpa RPC koreksi khusus berotorisasi.`, 'warning');
+      } else {
+        showToast(`Data KK ${cust.nama} berhasil diperbarui di penyimpanan lokal!`, 'success');
+      }
     }
     function bootstrapApp() {
-      loadState();
-      checkAuthGate();
-
-      // Status cloud awal harus jujur: offline/lokal sampai sinkron pertama sukses.
-      updateCloudStatusUI('offline', 'Belum tersinkron. Menunggu koneksi cloud.');
-      const simInput = document.getElementById('sim-date-input');
-      if (simInput) simInput.value = state.simDate;
-      const txDateInput = document.getElementById('record-tx-date');
-      if (txDateInput && !txDateInput.value) {
-        txDateInput.value = BASE_TODAY_DATE;
+      // 1. Inisialisasi sesi Auth & render header auth badge secara tahan error (prioritas utama)
+      try {
+        const session = getAuthSession();
+        state.operatorName = session ? (session.email || '') : '';
+        applyRoleBasedUIPrivileges(session ? session.role : null);
+        renderHeaderAuthBadge();
+      } catch (errAuth) {
+        console.warn('Peringatan inisialisasi awal auth badge:', errAuth);
       }
-      refreshAllUI();
-      safeCreateIcons();
 
-      // Cek deep link jika diakses via QR Scan kamera HP (?cek=... atau ?scan=...)
-      checkUrlDeepLink();
+      // 2. Muat state data lokal secara aman
+      try {
+        loadState();
+      } catch (errLoad) {
+        console.warn('Peringatan loadState:', errLoad);
+      }
 
-      // Inisialisasi status Supabase & sinkronisasi awal
-      syncWithSupabase(true).then(() => {
+      // 3. Status cloud awal harus offline/lokal sampai sinkronisasi terkonfirmasi
+      try {
+        updateCloudStatusUI('offline', 'Belum tersinkron. Menunggu koneksi cloud.');
+        const simInput = document.getElementById('sim-date-input');
+        if (simInput && state.simDate) simInput.value = state.simDate;
+        const txDateInput = document.getElementById('record-tx-date');
+        if (txDateInput && !txDateInput.value) {
+          txDateInput.value = BASE_TODAY_DATE;
+        }
+      } catch (errInit) {
+        console.warn('Peringatan inisialisasi form/status:', errInit);
+      }
+
+      // 4. Verifikasi gate PIN
+      try {
+        checkAuthGate();
+      } catch (errGate) {
+        console.warn('Peringatan checkAuthGate:', errGate);
+      }
+
+      // 5. Render seluruh antarmuka aplikasi
+      try {
+        refreshAllUI();
+        safeCreateIcons();
+      } catch (errUI) {
+        console.warn('Peringatan refreshAllUI:', errUI);
+        try { renderHeaderAuthBadge(); } catch (e) {}
+      }
+
+      // 6. Cek deep link & sinkronisasi background cloud
+      try {
         checkUrlDeepLink();
-      });
+        syncWithSupabase(true).then(() => {
+          checkUrlDeepLink();
+        }).catch((err) => {
+          console.warn('Sync background startup gagal (ditangani aman):', err);
+        });
 
-      // Polling background setiap 25 detik agar otomatis sinkron saat multi-device (Laptop & HP)
-      setInterval(() => {
-        syncWithSupabase(true);
-      }, 25000);
+        setInterval(() => {
+          syncWithSupabase(true);
+        }, 25000);
+      } catch (errSync) {
+        console.warn('Peringatan background sync:', errSync);
+      }
     }
 
     if (document.readyState === 'loading') {
