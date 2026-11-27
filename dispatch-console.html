@@ -41,6 +41,29 @@
   <script>
     window.__APP_CONFIG__ = window.__APP_CONFIG__ || { supabaseUrl: '', supabaseAnonKey: '' };
   </script>
+  <script>
+    // Anti-FOUC Full-Screen Login Gate: kunci & tutup render awal dashboard sebelum <body> dibuat jika mode cloud aktif tanpa sesi valid
+    (function () {
+      try {
+        var cfg = window.__APP_CONFIG__ || {};
+        var url = String(cfg.supabaseUrl || '').trim();
+        var key = String(cfg.supabaseAnonKey || '').trim();
+        if (!url || !key || !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url)) return;
+        var params = new URLSearchParams(window.location.search);
+        if (params.get('id') || params.get('cek') || params.get('scan') || params.get('kk')) return;
+        var raw = sessionStorage.getItem('catat_kuota_supabase_auth_session_v1') || localStorage.getItem('catat_kuota_supabase_auth_session_v1');
+        var session = raw ? JSON.parse(raw) : null;
+        var hasValidSession = Boolean(
+          session &&
+          session.access_token &&
+          !(session.expires_at && Number(session.expires_at) <= Date.now() && !session.refresh_token)
+        );
+        if (!hasValidSession) {
+          document.documentElement.classList.add('auth-gate-locked');
+        }
+      } catch (e) {}
+    })();
+  </script>
 
   <style>
     body {
@@ -544,6 +567,24 @@
     }
     #btn-lock-warehouse:hover .shackle-unlocked {
       transform: rotate(-4deg) translateY(-0.5px);
+    }
+
+    html.auth-gate-locked body {
+      overflow: hidden !important;
+    }
+    html.auth-gate-locked #app-shell {
+      visibility: hidden !important;
+      pointer-events: none !important;
+      user-select: none !important;
+    }
+    html.auth-gate-locked #modal-auth-login {
+      display: flex !important;
+      z-index: 9999 !important;
+      background: linear-gradient(135deg, #020617 0%, #0f172a 55%, #064e3b 100%) !important;
+      backdrop-filter: blur(12px) !important;
+    }
+    html.auth-gate-locked #auth-login-close-btn {
+      display: none !important;
     }
   </style>
 </head>
@@ -1734,7 +1775,7 @@
   <!-- ===================================================================== -->
   <div
     id="modal-auth-login"
-    class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
+    class="fixed inset-0 z-[9999] hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
     role="dialog"
     aria-modal="true"
     aria-labelledby="modal-auth-login-title"
@@ -1747,11 +1788,12 @@
           </div>
           <div>
             <h3 id="modal-auth-login-title" class="text-sm font-extrabold text-slate-900 tracking-tight">Login Petugas</h3>
-            <p class="text-xs text-slate-500">Supabase Auth Session</p>
+            <p id="auth-login-subtitle" class="text-xs text-slate-500">Supabase Auth Session</p>
           </div>
         </div>
         <button
           type="button"
+          id="auth-login-close-btn"
           onclick="closeLoginModal()"
           class="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl transition cursor-pointer"
           title="Tutup Modal"
@@ -1792,7 +1834,7 @@
           </label>
         </div>
 
-        <div id="auth-login-error" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
+        <div id="auth-login-error" role="alert" aria-live="polite" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
 
         <button
           type="submit"
@@ -3106,7 +3148,7 @@
   <!-- ===================================================================== -->
   <!-- TOAST NOTIFICATIONS                                                   -->
   <!-- ===================================================================== -->
-  <div id="toast-container" class="fixed bottom-16 sm:bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+  <div id="toast-container" class="fixed bottom-16 sm:bottom-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
 
   <!-- ===================================================================== -->
   <!-- LOGIKA APLIKASI JAVASCRIPT                                            -->
@@ -10872,6 +10914,7 @@ const INDONESIA_REGIONS = {
 
       const loginGate = document.getElementById('login-gate-screen');
       if (loginGate) loginGate.classList.add('hidden');
+      if (typeof syncSupabaseLoginGate === 'function') syncSupabaseLoginGate();
 
       const scanResultModal = document.getElementById('modal-scan-result');
       if (scanResultModal) scanResultModal.classList.add('hidden');
@@ -12072,6 +12115,73 @@ const INDONESIA_REGIONS = {
       localStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY);
     }
 
+    function isValidAuthSessionObject(session) {
+      if (!session || typeof session !== 'object' || !session.access_token) return false;
+      if (session.expires_at && Number(session.expires_at) <= Date.now() && !session.refresh_token) {
+        return false;
+      }
+      return true;
+    }
+
+    function isCloudAuthGateRequired() {
+      if (typeof state !== 'undefined' && state.isPublicKioskMode) return false;
+      const cfg = (typeof getSupabaseConfig === 'function') ? getSupabaseConfig() : { url: '', key: '' };
+      const url = String((cfg && cfg.url) || '').trim();
+      const key = String((cfg && cfg.key) || '').trim();
+      if (!url || !key || !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url)) {
+        return false;
+      }
+      return !isValidAuthSessionObject(getAuthSession());
+    }
+
+    function setDashboardLockState(locked) {
+      if (typeof document !== 'undefined' && document.documentElement && document.documentElement.classList) {
+        document.documentElement.classList.toggle('auth-gate-locked', Boolean(locked));
+      }
+      const shell = document.getElementById('app-shell');
+      if (shell) {
+        shell.inert = Boolean(locked);
+        if (locked) {
+          shell.setAttribute('aria-hidden', 'true');
+          shell.classList.add('pointer-events-none', 'select-none');
+        } else {
+          shell.removeAttribute('aria-hidden');
+          shell.classList.remove('pointer-events-none', 'select-none');
+        }
+      }
+      if (typeof document !== 'undefined' && document.body && document.body.classList) {
+        document.body.classList.toggle('overflow-hidden', Boolean(locked));
+      }
+    }
+
+    function syncSupabaseLoginGate() {
+      if (isCloudAuthGateRequired()) {
+        openLoginModal({ gateMode: true });
+        return true;
+      }
+      closeLoginModal();
+      return false;
+    }
+
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('storage', (e) => {
+        if (!e || e.key === SUPABASE_AUTH_STORAGE_KEY || e.key === null) {
+          if (e && e.key === SUPABASE_AUTH_STORAGE_KEY && !e.newValue) {
+            try { sessionStorage.removeItem(SUPABASE_AUTH_STORAGE_KEY); } catch (err) {}
+          }
+          const session = getAuthSession();
+          const valid = isValidAuthSessionObject(session);
+          state.operatorName = valid ? (session.email || '') : '';
+          applyRoleBasedUIPrivileges(valid ? session.role : null);
+          renderHeaderAuthBadge();
+          syncSupabaseLoginGate();
+          if (typeof refreshAllUI === 'function') {
+            try { refreshAllUI(); } catch (err) {}
+          }
+        }
+      });
+    }
+
     async function loginWithSupabase(email, password, remember = true) {
       const { url, key } = getSupabaseConfig();
       if (!url || !key) {
@@ -12127,6 +12237,7 @@ const INDONESIA_REGIONS = {
       state.operatorName = session.email;
       applyRoleBasedUIPrivileges(session.role);
       renderHeaderAuthBadge();
+      if (typeof syncSupabaseLoginGate === 'function') syncSupabaseLoginGate();
       refreshAllUI();
 
       if (!serverRole) {
@@ -12266,6 +12377,7 @@ const INDONESIA_REGIONS = {
         showToast('Sesi petugas telah logout. Seluruh akses mutasi data dikunci.', 'info');
       }
       refreshAllUI();
+      syncSupabaseLoginGate();
     }
 
     function applyRoleBasedUIPrivileges(role) {
@@ -12285,23 +12397,57 @@ const INDONESIA_REGIONS = {
       renderHeaderAuthBadge();
     }
 
-    function openLoginModal() {
+    function openLoginModal(options = {}) {
       const modal = document.getElementById('modal-auth-login');
       if (!modal) return;
+      const gateMode = Boolean((options && options.gateMode) || isCloudAuthGateRequired());
+
+      if (gateMode) {
+        modal.classList.remove('bg-slate-900/60', 'backdrop-blur-xs');
+        modal.classList.add('bg-slate-950/95', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950', 'backdrop-blur-md');
+      } else {
+        modal.classList.remove('bg-slate-950/95', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950', 'backdrop-blur-md');
+        modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
+      }
+
+      const closeBtn = document.getElementById('auth-login-close-btn');
+      if (closeBtn) closeBtn.classList.toggle('hidden', gateMode);
+
+      const subtitleEl = document.getElementById('auth-login-subtitle');
+      if (subtitleEl) {
+        subtitleEl.textContent = gateMode ? 'Masuk akun petugas untuk membuka dashboard' : 'Supabase Auth Session';
+      }
+
       const errBox = document.getElementById('auth-login-error');
       if (errBox) {
         errBox.textContent = '';
         errBox.classList.add('hidden');
       }
+      const passInp = document.getElementById('auth-password-input');
+      if (gateMode && passInp) passInp.value = '';
+
       modal.classList.remove('hidden');
+      setDashboardLockState(gateMode);
       const emailInp = document.getElementById('auth-email-input');
       if (emailInp) setTimeout(() => emailInp.focus(), 150);
       safeCreateIcons();
     }
 
     function closeLoginModal() {
+      if (isCloudAuthGateRequired()) {
+        setDashboardLockState(true);
+        return;
+      }
+      setDashboardLockState(false);
+
       const modal = document.getElementById('modal-auth-login');
-      if (modal) modal.classList.add('hidden');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('bg-slate-950/95', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950', 'backdrop-blur-md');
+        modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
+      }
+      const closeBtn = document.getElementById('auth-login-close-btn');
+      if (closeBtn) closeBtn.classList.remove('hidden');
     }
 
     async function handleAuthLoginSubmit(e) {
@@ -13859,6 +14005,8 @@ const INDONESIA_REGIONS = {
       openLoginModal,
       closeLoginModal,
       handleAuthLoginSubmit,
+      isCloudAuthGateRequired,
+      syncSupabaseLoginGate,
       loginWithSupabase,
       logoutSupabase,
       generateRequestId,
@@ -14075,6 +14223,7 @@ const INDONESIA_REGIONS = {
         state.operatorName = session ? (session.email || '') : '';
         applyRoleBasedUIPrivileges(session ? session.role : null);
         renderHeaderAuthBadge();
+        syncSupabaseLoginGate();
       } catch (errAuth) {
         console.warn('Peringatan inisialisasi awal auth badge:', errAuth);
       }
