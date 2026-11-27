@@ -1224,6 +1224,7 @@
                   <th class="py-3 px-3.5">Kepala Keluarga</th>
                   <th class="py-3 px-3.5">Beras</th>
                   <th class="py-3 px-3.5">Gas LPG</th>
+                  <th class="py-3 px-3.5 whitespace-nowrap">Petugas</th>
                   <th class="py-3 px-3.5 text-center w-[70px]">Aksi</th>
                 </tr>
               </thead>
@@ -1461,6 +1462,7 @@
                     <th class="py-2.5 px-3.5 whitespace-nowrap">Barang</th>
                     <th class="py-2.5 px-3.5 whitespace-nowrap">Jumlah</th>
                     <th class="py-2.5 px-3.5">Referensi / Keterangan</th>
+                    <th class="py-2.5 px-3.5 whitespace-nowrap">Petugas</th>
                     <th class="py-2.5 px-3.5 text-right whitespace-nowrap">Aksi</th>
                   </tr>
                 </thead>
@@ -7483,10 +7485,14 @@ const INDONESIA_REGIONS = {
 
               const serverLog = rpcResult.log || {};
               const finalLogId = serverLog.id || newLogId;
+              const opMeta = getCurrentOperatorMeta();
 
               const finalLogEntry = {
                 id: finalLogId,
                 request_id: serverLog.request_id || requestId,
+                operator_id: serverLog.operator_id || opMeta.operator_id,
+                operator_email: serverLog.operator_email || opMeta.operator_email,
+                operator_role: serverLog.operator_role || opMeta.operator_role,
                 date: serverLog.date || txDateStr,
                 time: timeStr,
                 no_kk: serverLog.no_kk || customer.no_kk,
@@ -7517,6 +7523,9 @@ const INDONESIA_REGIONS = {
                 if (qBeras > 0) {
                   state.warehouseLogs.unshift({
                     id: `WH-GI-${finalLogId}-BERAS`,
+                    operator_id: finalLogEntry.operator_id,
+                    operator_email: finalLogEntry.operator_email,
+                    operator_role: finalLogEntry.operator_role,
                     date: txDateStr,
                     type: 'GI-WARGA',
                     item: 'beras',
@@ -7530,6 +7539,9 @@ const INDONESIA_REGIONS = {
                 if (qGas > 0) {
                   state.warehouseLogs.unshift({
                     id: `WH-GI-${finalLogId}-GAS`,
+                    operator_id: finalLogEntry.operator_id,
+                    operator_email: finalLogEntry.operator_email,
+                    operator_role: finalLogEntry.operator_role,
                     date: txDateStr,
                     type: 'GI-WARGA',
                     item: 'gas',
@@ -7564,6 +7576,7 @@ const INDONESIA_REGIONS = {
                 state.logs.unshift({
                   id: newLogId,
                   request_id: requestId,
+                  ...getCurrentOperatorMeta(),
                   date: txDateStr,
                   time: timeStr,
                   no_kk: customer.no_kk,
@@ -7594,9 +7607,11 @@ const INDONESIA_REGIONS = {
           }
 
           // Fallback lokal mandiri jika belum mengonfigurasi Cloud Supabase
+          const localOpMeta = getCurrentOperatorMeta();
           const newLogEntry = {
             id: newLogId,
             request_id: requestId,
+            ...localOpMeta,
             date: txDateStr,
             time: timeStr,
             no_kk: customer.no_kk,
@@ -7613,6 +7628,7 @@ const INDONESIA_REGIONS = {
           if (qBeras > 0) {
             state.warehouseLogs.unshift({
               id: `WH-GI-${newLogId}-BERAS`,
+              ...localOpMeta,
               date: txDateStr,
               type: 'GI-WARGA',
               item: 'beras',
@@ -7626,6 +7642,7 @@ const INDONESIA_REGIONS = {
           if (qGas > 0) {
             state.warehouseLogs.unshift({
               id: `WH-GI-${newLogId}-GAS`,
+              ...localOpMeta,
               date: txDateStr,
               type: 'GI-WARGA',
               item: 'gas',
@@ -8500,6 +8517,67 @@ const INDONESIA_REGIONS = {
       });
     }
 
+    function getCurrentOperatorMeta() {
+      const session = (typeof getAuthSession === 'function') ? getAuthSession() : null;
+      const role = session && session.role ? String(session.role).toLowerCase().trim() : null;
+      const email = session && session.email ? String(session.email).toLowerCase().trim() : null;
+      const uid = session && session.user_id ? String(session.user_id).trim() : null;
+      return { operator_id: uid || null, operator_email: email || null, operator_role: role || null };
+    }
+
+    function resolveOperatorMeta(entry) {
+      const rawId = entry && entry.operator_id ? String(entry.operator_id).trim() : '';
+      const rawEmail = entry && entry.operator_email ? String(entry.operator_email).trim() : '';
+      const rawRole = entry && entry.operator_role ? String(entry.operator_role).trim().toLowerCase() : '';
+      const fallbackRole = (!rawRole && !rawEmail && !rawId && typeof state !== 'undefined' && state.currentUserRole)
+        ? String(state.currentUserRole).trim().toLowerCase()
+        : '';
+      const role = rawRole || fallbackRole;
+      return {
+        role: role || '',
+        email: rawEmail || '',
+        uid: rawId || '',
+      };
+    }
+
+    function formatOperatorRoleEmailText(entry) {
+      const meta = resolveOperatorMeta(entry);
+      const roleTag = meta.role ? `[${meta.role.toUpperCase()}]` : '[SISTEM]';
+      if (meta.email) return `${roleTag} ${meta.email}`;
+      if (meta.uid) return `${roleTag} ${meta.uid.length > 14 ? meta.uid.slice(0, 8) + '...' : meta.uid}`;
+      return `${roleTag} Lokal / Offline`;
+    }
+
+    function renderOperatorBadgeHtml(entry, compact = false) {
+      const meta = resolveOperatorMeta(entry);
+      const roleColors = {
+        cashier: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+        warehouse_admin: 'bg-amber-50 text-amber-800 border-amber-200',
+        admin: 'bg-purple-50 text-purple-800 border-purple-200',
+        supervisor: 'bg-sky-50 text-sky-800 border-sky-200',
+      };
+      const badgeCls = roleColors[meta.role] || 'bg-slate-100 text-slate-600 border-slate-200';
+      const roleLabel = meta.role ? meta.role.toUpperCase() : 'OFFLINE';
+      const primaryText = meta.email || (meta.uid ? (meta.uid.length > 14 ? `${meta.uid.slice(0, 8)}...` : meta.uid) : 'Mode Lokal');
+      const titleParts = [];
+      if (meta.role) titleParts.push(`Role: ${meta.role}`);
+      if (meta.email) titleParts.push(`Email: ${meta.email}`);
+      if (meta.uid) titleParts.push(`UID: ${meta.uid}`);
+      const fullTitle = titleParts.join(' | ') || 'Tercatat lokal tanpa sesi Cloud Auth';
+
+      if (compact) {
+        return `<span class="inline-flex items-center gap-1.5 min-w-0 max-w-full" title="${escapeHtml(fullTitle)}">
+          <span class="px-1.5 py-0.5 rounded-md border text-[9px] font-mono font-bold uppercase tracking-tight shrink-0 ${badgeCls}">${escapeHtml(roleLabel)}</span>
+          <span class="text-[11px] font-medium text-slate-600 truncate">${escapeHtml(primaryText)}</span>
+        </span>`;
+      }
+
+      return `<div class="inline-flex flex-col items-start gap-0.5 max-w-[190px]" title="${escapeHtml(fullTitle)}">
+        <span class="px-1.5 py-0.5 rounded-md border text-[10px] font-mono font-bold uppercase tracking-tight leading-none ${badgeCls}">${escapeHtml(roleLabel)}</span>
+        <span class="text-[11px] font-medium text-slate-600 truncate max-w-full">${escapeHtml(primaryText)}</span>
+      </div>`;
+    }
+
     // =========================================================================
     // 13. TAB 3: RIWAYAT PENGAMBILAN & PEMBATALAN LOG (+ REVERSAL GI-WARGA)
     // =========================================================================
@@ -8548,7 +8626,13 @@ const INDONESIA_REGIONS = {
         if (cycleFilter === 'expired' && !isExpired) return false;
 
         if (!searchVal) return true;
-        return l.nama.includes(searchVal) || l.no_kk.includes(searchVal) || l.no_kk.endsWith(searchVal);
+        return (
+          l.nama.includes(searchVal) ||
+          l.no_kk.includes(searchVal) ||
+          l.no_kk.endsWith(searchVal) ||
+          (l.operator_email && String(l.operator_email).toUpperCase().includes(searchVal)) ||
+          (l.operator_role && String(l.operator_role).toUpperCase().includes(searchVal))
+        );
       });
 
       const totalBeras = filteredLogs.reduce((sum, l) => sum + (Number(l.qty_beras) || 0), 0);
@@ -8605,7 +8689,7 @@ const INDONESIA_REGIONS = {
             <p class="text-xs sm:text-sm font-medium">Belum ada catatan pengambilan kuota yang sesuai filter.</p>
           </div>
         `;
-        if (tbody) tbody.innerHTML = `<tr><td colspan="7">${emptyHTML}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="8">${emptyHTML}</td></tr>`;
         if (mobileWrapper) mobileWrapper.innerHTML = emptyHTML;
         safeCreateIcons();
         return;
@@ -8653,6 +8737,7 @@ const INDONESIA_REGIONS = {
                       : `<span class="text-slate-300">-</span>`
                   }
                 </td>
+                <td class="py-3 px-3.5 whitespace-nowrap">${renderOperatorBadgeHtml(l)}</td>
                 <td class="py-3 px-3.5 text-center whitespace-nowrap">
                   <div class="relative inline-block text-left dropdown-history-menu">
                     <button
@@ -8714,6 +8799,7 @@ const INDONESIA_REGIONS = {
                     </div>
                     <h4 class="text-sm font-extrabold text-slate-900 mt-0.5 truncate">${escapeHtml(l.nama)}</h4>
                     <p class="font-mono text-[11px] text-slate-500">${formatKKMasked(l.no_kk)}</p>
+                    <div class="mt-1">${renderOperatorBadgeHtml(l, true)}</div>
                   </div>
                   <span class="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold shrink-0 ${
                     isExpired ? 'bg-slate-100 text-slate-500' : 'bg-sky-50 text-sky-700 border border-sky-200'
@@ -9294,7 +9380,7 @@ const INDONESIA_REGIONS = {
         sheetName = 'Penyaluran_Pelanggan';
         reportTitle = 'LAPORAN PENYALURAN KUOTA PELANGGAN (BERAS &amp; GAS LPG)';
         filename = `Laporan-Penyaluran-KK-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.xls`;
-        totalCols = 10;
+        totalCols = 11;
 
         const totalBeras = data.reduce((acc, c) => acc + (Number(c.qty_beras) || 0), 0);
         const totalGas = data.reduce((acc, c) => acc + (Number(c.qty_gas) || 0), 0);
@@ -9316,7 +9402,7 @@ const INDONESIA_REGIONS = {
               <div class="kpi-title">TOTAL GAS LPG DISALURKAN</div>
               <div class="kpi-value">${totalGas} Tabung / Pcs</div>
             </td>
-            <td colspan="2" class="kpi-box" style="background-color: #f1f5f9; border-color: #cbd5e1;">
+            <td colspan="3" class="kpi-box" style="background-color: #f1f5f9; border-color: #cbd5e1;">
               <div class="kpi-title" style="color: #334155;">TOTAL KOMODITAS</div>
               <div class="kpi-value" style="color: #0f172a;">${totalAll} Pcs</div>
             </td>
@@ -9335,6 +9421,7 @@ const INDONESIA_REGIONS = {
             <th class="tbl-head" style="width: 65pt;">GAS LPG (PCS)</th>
             <th class="tbl-head" style="width: 65pt;">TOTAL (PCS)</th>
             <th class="tbl-head" style="width: 95pt;">KUOTA BARU (JATUH TEMPO)</th>
+            <th class="tbl-head" style="width: 150pt;">PETUGAS</th>
           </tr>
         `;
 
@@ -9354,6 +9441,7 @@ const INDONESIA_REGIONS = {
                 <td class="${cellClass} text-right mono">${Number(l.qty_gas) || 0}</td>
                 <td class="${cellClass} text-right mono" style="font-weight: bold;">${Number(l.total_pcs) || 0}</td>
                 <td class="${cellClass} text-center">${formatShortDateID(nextCycle)}</td>
+                <td class="${cellClass} text-left" style="font-size: 8.5pt;">${escapeHtml(formatOperatorRoleEmailText(l))}</td>
               </tr>
             `;
           })
@@ -9366,13 +9454,14 @@ const INDONESIA_REGIONS = {
             <td class="cell-total text-right mono">${totalGas}</td>
             <td class="cell-total text-right mono" style="background-color: #dcfce7; color: #166534;">${totalAll}</td>
             <td class="cell-total text-center" style="font-size: 8.5pt; font-weight: normal; color: #64748b;">${totalTrx} Transaksi Selesai</td>
+            <td class="cell-total text-center" style="font-size: 8.5pt; font-weight: normal; color: #64748b;">-</td>
           </tr>
         `;
       } else {
         sheetName = 'Mutasi_Gudang';
         reportTitle = 'LAPORAN MUTASI &amp; KONTROL STOK FISIK GUDANG';
         filename = `Laporan-Mutasi-Gudang-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.xls`;
-        totalCols = 7;
+        totalCols = 8;
 
         let totalQtyMasukBeras = 0;
         let totalQtyMasukGas = 0;
@@ -9405,7 +9494,7 @@ const INDONESIA_REGIONS = {
               <div class="kpi-title" style="color: #be123c;">BARANG KELUAR (GI)</div>
               <div class="kpi-value" style="color: #9f1239;">-${totalQtyKeluarBeras} Beras | -${totalQtyKeluarGas} Gas</div>
             </td>
-            <td class="kpi-box" style="background-color: #eff6ff; border-color: #bfdbfe;">
+            <td colspan="2" class="kpi-box" style="background-color: #eff6ff; border-color: #bfdbfe;">
               <div class="kpi-title" style="color: #1d4ed8;">SISA STOK SAAT INI</div>
               <div class="kpi-value" style="color: #1e40af; font-size: 11pt;">B:${whSummaryExcel.berasStock} | G:${whSummaryExcel.gasStock}</div>
             </td>
@@ -9421,6 +9510,7 @@ const INDONESIA_REGIONS = {
             <th class="tbl-head" style="width: 85pt;">KOMODITAS</th>
             <th class="tbl-head" style="width: 75pt;">QTY (PCS/SAK)</th>
             <th class="tbl-head" style="width: 220pt;">NO. DO / KETERANGAN REFERENSI</th>
+            <th class="tbl-head" style="width: 150pt;">PETUGAS</th>
           </tr>
         `;
 
@@ -9440,6 +9530,7 @@ const INDONESIA_REGIONS = {
                 <td class="${cellClass} text-center" style="font-weight: 600;">${itemLabel}</td>
                 <td class="${cellClass} text-right mono" style="font-weight: bold; color: ${isGR ? '#047857' : '#b91c1c'};">${qtySign}</td>
                 <td class="${cellClass} text-left">${escapeHtml(m.ref || '-')}</td>
+                <td class="${cellClass} text-left" style="font-size: 8.5pt;">${escapeHtml(formatOperatorRoleEmailText(m))}</td>
               </tr>
             `;
           })
@@ -9454,6 +9545,7 @@ const INDONESIA_REGIONS = {
             <td class="cell-total text-left" style="font-size: 8.5pt; font-weight: normal; color: #475569;">
               Sisa Saldo Gudang: Beras ${whSummaryExcel.berasStock} sak, Gas LPG ${whSummaryExcel.gasStock} tabung
             </td>
+            <td class="cell-total text-center" style="font-size: 8.5pt; font-weight: normal; color: #64748b;">-</td>
           </tr>
         `;
       }
@@ -9599,7 +9691,7 @@ const INDONESIA_REGIONS = {
       if (exportState.dataType === 'logs') {
         filename = `riwayat-kuota-kk-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
         const cycleDays = Number(state.settings.cycleDays) || 30;
-        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo'];
+        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo', 'Petugas'];
         const rows = data.map((l, idx) => [
           idx + 1,
           l.id,
@@ -9611,11 +9703,12 @@ const INDONESIA_REGIONS = {
           l.qty_gas,
           l.total_pcs,
           addDaysISO(l.date, cycleDays),
+          formatOperatorRoleEmailText(l),
         ]);
         csvContent = buildCSV(headers, rows);
       } else {
         filename = `mutasi-stok-gudang-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
-        const headers = ['No', 'ID_Mutasi', 'Tanggal', 'Tipe', 'Komoditas', 'Qty', 'No_DO_Keterangan'];
+        const headers = ['No', 'ID_Mutasi', 'Tanggal', 'Tipe', 'Komoditas', 'Qty', 'No_DO_Keterangan', 'Petugas'];
         const rows = data.map((w, idx) => [
           idx + 1,
           w.id,
@@ -9624,6 +9717,7 @@ const INDONESIA_REGIONS = {
           w.item.toUpperCase(),
           w.qty,
           w.ref || '',
+          formatOperatorRoleEmailText(w),
         ]);
         csvContent = buildCSV(headers, rows);
       }
@@ -9788,12 +9882,13 @@ const INDONESIA_REGIONS = {
             <th style="width: 75px;" class="text-center">ID Trx</th>
             <th style="width: 75px;" class="text-center">Tanggal</th>
             <th style="width: 45px;" class="text-center">Jam</th>
-            <th style="width: 120px;" class="text-center">No. KK</th>
+            <th style="width: 115px;" class="text-center">No. KK</th>
             <th>Kepala Keluarga</th>
-            <th style="width: 60px;" class="text-right">Beras</th>
-            <th style="width: 60px;" class="text-right">Gas LPG</th>
-            <th style="width: 60px;" class="text-right">Total</th>
-            <th style="width: 90px;" class="text-center">Jatuh Tempo</th>
+            <th style="width: 55px;" class="text-right">Beras</th>
+            <th style="width: 55px;" class="text-right">Gas LPG</th>
+            <th style="width: 55px;" class="text-right">Total</th>
+            <th style="width: 85px;" class="text-center">Jatuh Tempo</th>
+            <th style="width: 130px;">Petugas</th>
           </tr>
         `;
 
@@ -9812,6 +9907,7 @@ const INDONESIA_REGIONS = {
                 <td class="text-right mono">${Number(l.qty_gas) || 0}</td>
                 <td class="text-right mono bold">${Number(l.total_pcs) || 0}</td>
                 <td class="text-center">${formatShortDateID(nextCycle)}</td>
+                <td style="font-size: 8pt;">${escapeHtml(formatOperatorRoleEmailText(l))}</td>
               </tr>
             `;
           })
@@ -9824,6 +9920,7 @@ const INDONESIA_REGIONS = {
             <td class="text-right mono bold">${totalGas}</td>
             <td class="text-right mono bold total-highlight">${totalAll}</td>
             <td class="text-center" style="font-size: 8pt; color: #64748b;">${totalTrx} Transaksi</td>
+            <td></td>
           </tr>
         `;
       } else {
@@ -9875,6 +9972,7 @@ const INDONESIA_REGIONS = {
             <th style="width: 90px;" class="text-center">Komoditas</th>
             <th style="width: 75px;" class="text-right">Qty</th>
             <th>No. DO / Keterangan Referensi</th>
+            <th style="width: 130px;">Petugas</th>
           </tr>
         `;
 
@@ -9893,6 +9991,7 @@ const INDONESIA_REGIONS = {
                 <td class="text-center bold">${itemLabel}</td>
                 <td class="text-right mono bold ${isGR ? 'text-emerald' : 'text-rose'}">${qtySign}</td>
                 <td>${escapeHtml(m.ref || '-')}</td>
+                <td style="font-size: 8pt;">${escapeHtml(formatOperatorRoleEmailText(m))}</td>
               </tr>
             `;
           })
@@ -9903,6 +10002,7 @@ const INDONESIA_REGIONS = {
             <td colspan="5" class="text-right bold" style="padding-right: 10px;">RINGKASAN MUTASI:</td>
             <td class="text-right mono bold" style="font-size: 8pt;">+${totalQtyMasukBeras + totalQtyMasukGas} / -${totalQtyKeluarBeras + totalQtyKeluarGas}</td>
             <td style="font-size: 8pt; color: #475569;">Sisa Gudang: Beras ${whSummaryPdf.berasStock} sak, Gas LPG ${whSummaryPdf.gasStock} tabung</td>
+            <td></td>
           </tr>
         `;
       }
@@ -10617,7 +10717,7 @@ const INDONESIA_REGIONS = {
 
       if (filteredWh.length === 0) {
         const emptyHTML = `<div class="py-8 text-center text-xs text-slate-400">Belum ada transaksi gudang sesuai filter.</div>`;
-        if (tbody) tbody.innerHTML = `<tr><td colspan="6">${emptyHTML}</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7">${emptyHTML}</td></tr>`;
         if (mobileCardsEl) mobileCardsEl.innerHTML = emptyHTML;
         safeCreateIcons();
         return;
@@ -10661,6 +10761,7 @@ const INDONESIA_REGIONS = {
                   ${(isGR || isInitial) ? `+${Number(m.qty)}` : `-${Number(m.qty)}`} ${mItem === 'beras' ? 'sak' : 'pcs'}
                 </td>
                 <td class="py-2.5 px-3.5 text-xs text-slate-700 font-medium">${escapeHtml(m.ref || '-')}</td>
+                <td class="py-2.5 px-3.5 whitespace-nowrap">${renderOperatorBadgeHtml(m)}</td>
                 <td class="py-2.5 px-3.5 text-right whitespace-nowrap">
                   ${
                     isAuto
@@ -10722,6 +10823,7 @@ const INDONESIA_REGIONS = {
                         </button>`
                   }
                 </div>
+                <div class="pt-0.5">${renderOperatorBadgeHtml(m, true)}</div>
               </div>
             `;
           })
@@ -10824,6 +10926,7 @@ const INDONESIA_REGIONS = {
       const newWhEntry = {
         id: generateSecureTxId(prefix),
         request_id: requestId,
+        ...getCurrentOperatorMeta(),
         date,
         type: state.warehouseFormType,
         item,
@@ -14109,12 +14212,27 @@ const INDONESIA_REGIONS = {
               state.customers.unshift(reconstructedCust);
             }
           } else if (entry.type === 'process_quota_dispense') {
-            await callProcessQuotaDispenseRPC(entry.payload);
+            const dispenseRes = await callProcessQuotaDispenseRPC(entry.payload);
+            const serverLog = (dispenseRes && dispenseRes.log) ? dispenseRes.log : null;
             const targetLog = (state.logs || []).find((l) => l.request_id === entry.requestId || l.id === entry.payload.p_custom_log_id);
             if (targetLog) {
+              if (serverLog) {
+                targetLog.id = serverLog.id || targetLog.id;
+                targetLog.operator_id = serverLog.operator_id || targetLog.operator_id || null;
+                targetLog.operator_email = serverLog.operator_email || targetLog.operator_email || null;
+                targetLog.operator_role = serverLog.operator_role || targetLog.operator_role || null;
+              }
               targetLog.is_dirty = false;
               targetLog.status = 'COMPLETED';
               targetLog.sync_status = 'SYNCED';
+              for (const w of (state.warehouseLogs || [])) {
+                if (w && w.logId === targetLog.id) {
+                  w.operator_id = targetLog.operator_id || w.operator_id || null;
+                  w.operator_email = targetLog.operator_email || w.operator_email || null;
+                  w.operator_role = targetLog.operator_role || w.operator_role || null;
+                  w.is_dirty = false;
+                }
+              }
             }
           } else if (entry.type === 'process_warehouse_mutation') {
             const whRpcRes = await callProcessWarehouseMutationRPC(entry.payload);
@@ -14124,6 +14242,9 @@ const INDONESIA_REGIONS = {
             if (targetWh) {
               if (serverWh) {
                 targetWh.id = serverWh.id || targetWh.id;
+                targetWh.operator_id = serverWh.operator_id || targetWh.operator_id || null;
+                targetWh.operator_email = serverWh.operator_email || targetWh.operator_email || null;
+                targetWh.operator_role = serverWh.operator_role || targetWh.operator_role || null;
                 targetWh.created_at = serverWh.created_at || targetWh.created_at || targetWh.local_updated_at || new Date(confirmedAt).toISOString();
               }
               targetWh.is_dirty = false;
@@ -14210,6 +14331,8 @@ const INDONESIA_REGIONS = {
         id: l.id,
         request_id: l.request_id || null,
         operator_id: l.operator_id || null,
+        operator_email: l.operator_email || null,
+        operator_role: l.operator_role || null,
         date: l.date,
         time: l.time,
         member_id: l.member_id || null,
@@ -14233,6 +14356,9 @@ const INDONESIA_REGIONS = {
       return {
         id: w.id,
         request_id: w.request_id || null,
+        operator_id: w.operator_id || null,
+        operator_email: w.operator_email || null,
+        operator_role: w.operator_role || null,
         date: dateStr,
         type: typeStr,
         item: itemStr,
@@ -15118,15 +15244,33 @@ const INDONESIA_REGIONS = {
 
       try {
         const resData = await callProcessQuotaDispenseRPC(rpcPayload);
+        const serverLog = (resData && resData.log) ? resData.log : null;
 
         OutboxManager.remove(requestId);
         logEntry.is_dirty = false;
+        if (serverLog) {
+          logEntry.operator_id = serverLog.operator_id || logEntry.operator_id || null;
+          logEntry.operator_email = serverLog.operator_email || logEntry.operator_email || null;
+          logEntry.operator_role = serverLog.operator_role || logEntry.operator_role || null;
+        }
         const found = state.logs.find((l) => l.id === logEntry.id);
-        if (found) found.is_dirty = false;
+        if (found) {
+          found.is_dirty = false;
+          if (serverLog) {
+            found.operator_id = serverLog.operator_id || found.operator_id || null;
+            found.operator_email = serverLog.operator_email || found.operator_email || null;
+            found.operator_role = serverLog.operator_role || found.operator_role || null;
+          }
+        }
 
         // Mutasi gudang GI-WARGA dibuat otomatis oleh RPC di server. Tandai lokal juga sinkron.
         const whEntries = state.warehouseLogs.filter((w) => w.logId === logEntry.id);
         for (const w of whEntries) {
+          if (serverLog) {
+            w.operator_id = serverLog.operator_id || w.operator_id || null;
+            w.operator_email = serverLog.operator_email || w.operator_email || null;
+            w.operator_role = serverLog.operator_role || w.operator_role || null;
+          }
           w.is_dirty = false;
         }
 
@@ -15193,6 +15337,9 @@ const INDONESIA_REGIONS = {
         if (serverWh) {
           whEntry.id = serverWh.id || whEntry.id;
           whEntry.request_id = serverWh.request_id || requestId;
+          whEntry.operator_id = serverWh.operator_id || whEntry.operator_id || null;
+          whEntry.operator_email = serverWh.operator_email || whEntry.operator_email || null;
+          whEntry.operator_role = serverWh.operator_role || whEntry.operator_role || null;
           whEntry.date = String(serverWh.date || whEntry.date || '').slice(0, 10);
           whEntry.type = String(serverWh.type || cleanType).toUpperCase().trim();
           whEntry.item = String(serverWh.item || whEntry.item || '').toLowerCase().trim();
@@ -15638,6 +15785,10 @@ const INDONESIA_REGIONS = {
       closeAddCustomerModal,
       handleAddCustomerSubmit,
       confirmDeleteCustomer,
+      getCurrentOperatorMeta,
+      resolveOperatorMeta,
+      formatOperatorRoleEmailText,
+      renderOperatorBadgeHtml,
       renderHistoryTab,
       confirmDeleteLog,
       openEditLogModal,
