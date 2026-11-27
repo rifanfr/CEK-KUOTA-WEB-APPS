@@ -3734,10 +3734,16 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     // Tombstone Queue untuk Sinkronisasi Penghapusan Aman (Anti-Zombie Records)
     const TOMBSTONE_STORAGE_KEY = 'catat_kuota_kk_tombstones_v1';
+    let _memoryTombstoneCache = null;
 
     function getTombstones() {
+      if (Array.isArray(_memoryTombstoneCache)) {
+        return _memoryTombstoneCache.slice();
+      }
       try {
-        return JSON.parse(localStorage.getItem(TOMBSTONE_STORAGE_KEY) || '[]');
+        const parsed = JSON.parse(localStorage.getItem(TOMBSTONE_STORAGE_KEY) || '[]');
+        _memoryTombstoneCache = Array.isArray(parsed) ? parsed : [];
+        return _memoryTombstoneCache.slice();
       } catch (e) {
         return [];
       }
@@ -3747,13 +3753,21 @@ const INDONESIA_REGIONS = {
       const list = getTombstones();
       if (!list.some((t) => t.type === type && t.id === id)) {
         list.push({ type, id, timestamp: Date.now() });
-        localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(list));
+        _memoryTombstoneCache = list;
+        try { localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(list)); } catch (e) {}
+        if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB.enqueueFlush) {
+          CatatKuotaIDB.enqueueFlush();
+        }
       }
     }
 
     function removeTombstone(type, id) {
       const list = getTombstones().filter((t) => !(t.type === type && t.id === id));
-      localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(list));
+      _memoryTombstoneCache = list;
+      try { localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(list)); } catch (e) {}
+      if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB.enqueueFlush) {
+        CatatKuotaIDB.enqueueFlush();
+      }
     }
 
     // Utility Sanitasi Keamanan & ID Kriptografi
@@ -3808,6 +3822,8 @@ const INDONESIA_REGIONS = {
       SYNC_REV: 'catat_kuota_kk_sync_rev_v2',
       OUTBOX: 'catat_kuota_kk_outbox_prod_v2',
       DEAD_LETTER: 'catat_kuota_kk_dead_letter_prod_v2',
+      SYNC_META: 'catat_kuota_kk_sync_meta_v4',
+      CONFLICT_REVIEW: 'catat_kuota_kk_conflict_review_v1',
     };
 
     const TAB_INSTANCE_ID = (typeof window !== 'undefined' && window.crypto && typeof crypto.randomUUID === 'function')
@@ -3816,7 +3832,7 @@ const INDONESIA_REGIONS = {
 
     // Versi skema penyimpanan. Naikkan setiap ada perubahan bentuk data,
     // lalu tambahkan langkah migrasinya di migrateState().
-    const CURRENT_SCHEMA_VERSION = 3;
+    const CURRENT_SCHEMA_VERSION = 4;
 
     // =========================================================================
     // GERBANG KEAMANAN SESI OPERATOR (LOGIN GATEWAY)
@@ -4501,10 +4517,446 @@ const INDONESIA_REGIONS = {
 
     
     // =========================================================================
+    // 2A-PLUS. INDEXEDDB ATOMIC ENGINE + NAVIGATOR.LOCKS + BROADCASTCHANNEL
+    // =========================================================================
+    let _inTabStorageLockChain = Promise.resolve();
+    function withStorageLock(fn) {
+      const runSerialized = () => {
+        const next = _inTabStorageLockChain.then(() => fn(), () => fn());
+        _inTabStorageLockChain = next.catch(() => {});
+        return next;
+      };
+      if (typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function') {
+        return navigator.locks.request('catat_kuota_idb_state', { mode: 'exclusive' }, () => runSerialized());
+      }
+      return runSerialized();
+    }
+
+    let _idbOutboxCache = null;
+    let _idbDeadLetterCache = null;
+    let _idbConflictCache = null;
+
+    const ConflictReviewManager = window.ConflictReviewManager = {
+      getEntries() {
+        if (Array.isArray(_idbConflictCache)) return _idbConflictCache.slice();
+        try {
+          const parsed = JSON.parse(localStorage.getItem(STORAGE_KEYS.CONFLICT_REVIEW) || '[]');
+          _idbConflictCache = Array.isArray(parsed) ? parsed : [];
+          return _idbConflictCache.slice();
+        } catch (e) {
+          return [];
+        }
+      },
+      saveEntries(entries) {
+        _idbConflictCache = Array.isArray(entries) ? entries.slice() : [];
+        try { localStorage.setItem(STORAGE_KEYS.CONFLICT_REVIEW, JSON.stringify(_idbConflictCache)); } catch (e) {}
+        if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB.enqueueFlush) {
+          CatatKuotaIDB.enqueueFlush();
+        }
+      },
+      add(record) {
+        if (!record || !record.request_id) return null;
+        const list = this.getEntries();
+        const existingIdx = list.findIndex((c) => c.request_id === record.request_id);
+        const normalized = {
+          status: 'CONFLICT_RECONCILIATION_REQUIRED',
+          recordedAt: new Date().toISOString(),
+          ...record,
+        };
+        if (existingIdx >= 0) {
+          list[existingIdx] = normalized;
+        } else {
+          list.unshift(normalized);
+        }
+        this.saveEntries(list);
+        return normalized;
+      },
+    };
+
+    const IDB_DB_NAME = 'catat_kuota_kk_idb_v1';
+    const IDB_DB_VERSION = 1;
+    const IDB_ALL_STORES = [
+      'customers',
+      'logs',
+      'warehouseLogs',
+      'outbox',
+      'dead_letter',
+      'tombstones',
+      'conflict_review',
+      'settings_and_meta',
+    ];
+
+    let _syncBroadcastChannel = null;
+
+    const CatatKuotaIDB = window.CatatKuotaIDB = {
+      _db: null,
+      _ready: false,
+      _pendingFlush: Promise.resolve(),
+      isSupported() {
+        return typeof indexedDB !== 'undefined' && indexedDB !== null && typeof indexedDB.open === 'function';
+      },
+      open() {
+        if (!this.isSupported()) return Promise.resolve(null);
+        if (this._db) return Promise.resolve(this._db);
+        return new Promise((resolve, reject) => {
+          const req = indexedDB.open(IDB_DB_NAME, IDB_DB_VERSION);
+          req.onupgradeneeded = (ev) => {
+            const db = ev.target.result;
+            const defs = [
+              ['customers', 'no_kk'],
+              ['logs', 'id'],
+              ['warehouseLogs', 'id'],
+              ['outbox', 'requestId'],
+              ['dead_letter', 'requestId'],
+              ['tombstones', 'idKey'],
+              ['conflict_review', 'request_id'],
+              ['settings_and_meta', 'key'],
+            ];
+            for (const [name, keyPath] of defs) {
+              if (!db.objectStoreNames.contains(name)) {
+                db.createObjectStore(name, { keyPath });
+              }
+            }
+          };
+          req.onsuccess = (ev) => {
+            const db = ev.target.result;
+            db.onversionchange = () => {
+              db.close();
+              if (this._db === db) this._db = null;
+            };
+            this._db = db;
+            resolve(db);
+          };
+          req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+        });
+      },
+      _reqP(req) {
+        return new Promise((resolve, reject) => {
+          req.onsuccess = () => resolve(req.result);
+          req.onerror = () => reject(req.error || new Error('IDB request failed'));
+        });
+      },
+      _txDone(tx) {
+        return new Promise((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error || new Error('IDB transaction aborted'));
+          tx.onerror = () => reject(tx.error || new Error('IDB transaction error'));
+        });
+      },
+      _writeStoreArray(store, items) {
+        store.clear();
+        for (const item of (items || [])) {
+          store.put(item);
+        }
+      },
+      _defaultSyncMeta() {
+        return {
+          key: 'sync_meta',
+          idb_migrated: this.isSupported(),
+          last_sync_seq: 0,
+          feed_epoch: null,
+          server_stock_summary: null,
+          last_sync_at: null,
+          last_full_snapshot_at: null,
+        };
+      },
+      _readLocalSyncMeta() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEYS.SYNC_META);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              return { ...this._defaultSyncMeta(), ...parsed };
+            }
+          }
+        } catch (e) {}
+        return this._defaultSyncMeta();
+      },
+      _persistSyncMetaCache(meta) {
+        if (typeof state !== 'undefined') state._syncMeta = meta;
+        try { localStorage.setItem(STORAGE_KEYS.SYNC_META, JSON.stringify(meta)); } catch (e) {}
+      },
+      _notifyOtherTabs(rev) {
+        if (_syncBroadcastChannel && typeof _syncBroadcastChannel.postMessage === 'function') {
+          try {
+            _syncBroadcastChannel.postMessage({ type: 'STATE_COMMITTED', tabId: TAB_INSTANCE_ID, rev });
+          } catch (e) {}
+        }
+      },
+      async _hydrateFromTx(tx) {
+        const [
+          custRows, logRows, whRows, outboxRows, dlRows, tombRows, conflictRows, metaRows
+        ] = await Promise.all([
+          this._reqP(tx.objectStore('customers').getAll()),
+          this._reqP(tx.objectStore('logs').getAll()),
+          this._reqP(tx.objectStore('warehouseLogs').getAll()),
+          this._reqP(tx.objectStore('outbox').getAll()),
+          this._reqP(tx.objectStore('dead_letter').getAll()),
+          this._reqP(tx.objectStore('tombstones').getAll()),
+          this._reqP(tx.objectStore('conflict_review').getAll()),
+          this._reqP(tx.objectStore('settings_and_meta').getAll()),
+        ]);
+
+        const metaMap = new Map((metaRows || []).map((m) => [m.key, m]));
+        const settingsRow = metaMap.get('settings');
+        const doSeqRow = metaMap.get('doSeqTracker');
+        const syncMetaRow = metaMap.get('sync_meta');
+        const syncRevRow = metaMap.get('sync_rev');
+
+        if (settingsRow && settingsRow.value) {
+          state.settings = { ...DEFAULT_SETTINGS, ...settingsRow.value };
+        }
+        state.customers = custRows || [];
+        state.logs = logRows || [];
+        state.warehouseLogs = whRows || [];
+        state.doSeqTracker = (doSeqRow && doSeqRow.value) ? doSeqRow.value : (state.doSeqTracker || {});
+        if (syncRevRow && typeof syncRevRow.rev === 'number') {
+          state._lastSyncRev = syncRevRow.rev;
+        }
+
+        const normOutbox = (outboxRows || []).map((e) => (
+          e && e.status === 'in_flight' ? { ...e, status: 'pending' } : e
+        ));
+        _idbOutboxCache = normOutbox;
+        _idbDeadLetterCache = dlRows || [];
+        _memoryTombstoneCache = (tombRows || []).map(({ idKey, ...rest }) => rest);
+        _idbConflictCache = conflictRows || [];
+
+        const syncMeta = syncMetaRow ? { ...this._defaultSyncMeta(), ...syncMetaRow } : this._defaultSyncMeta();
+        this._persistSyncMetaCache(syncMeta);
+
+        return { metaMap, syncMeta, hadStaleInFlight: (outboxRows || []).some((e) => e && e.status === 'in_flight') };
+      },
+      async initAndMigrateFromLocalStorage() {
+        return withStorageLock(async () => {
+          if (!this.isSupported()) {
+            const syncMeta = this._readLocalSyncMeta();
+            syncMeta.idb_migrated = false;
+            this._persistSyncMetaCache(syncMeta);
+            // Recovery stale in_flight in non-IDB env
+            const entries = OutboxManager.getEntries();
+            if (entries.some((e) => e.status === 'in_flight')) {
+              OutboxManager.saveEntries(entries.map((e) => (e.status === 'in_flight' ? { ...e, status: 'pending' } : e)));
+            }
+            this._ready = true;
+            return syncMeta;
+          }
+
+          const db = await this.open();
+          const tx = db.transaction(IDB_ALL_STORES, 'readwrite');
+          const syncMetaExisting = await this._reqP(tx.objectStore('settings_and_meta').get('sync_meta'));
+
+          if (!syncMetaExisting || !syncMetaExisting.idb_migrated) {
+            const outboxEntries = OutboxManager.getEntries().map((e) => (
+              e && e.status === 'in_flight' ? { ...e, status: 'pending' } : e
+            ));
+            const deadLetters = OutboxManager.getDeadLetterEntries();
+            const tombstones = getTombstones();
+            const conflicts = ConflictReviewManager.getEntries();
+            const meta = {
+              key: 'sync_meta',
+              idb_migrated: true,
+              last_sync_seq: 0,
+              feed_epoch: null,
+              server_stock_summary: null,
+              last_sync_at: null,
+              last_full_snapshot_at: null,
+            };
+            const rev = Date.now();
+
+            this._writeStoreArray(tx.objectStore('customers'), state.customers || []);
+            this._writeStoreArray(tx.objectStore('logs'), state.logs || []);
+            this._writeStoreArray(tx.objectStore('warehouseLogs'), state.warehouseLogs || []);
+            this._writeStoreArray(tx.objectStore('outbox'), outboxEntries);
+            this._writeStoreArray(tx.objectStore('dead_letter'), deadLetters);
+            this._writeStoreArray(tx.objectStore('tombstones'), tombstones.map((t) => ({ idKey: `${t.type}:${t.id}`, ...t })));
+            this._writeStoreArray(tx.objectStore('conflict_review'), conflicts);
+            const metaStore = tx.objectStore('settings_and_meta');
+            metaStore.put({ key: 'settings', value: state.settings });
+            metaStore.put({ key: 'doSeqTracker', value: state.doSeqTracker || {} });
+            metaStore.put(meta);
+            metaStore.put({ key: 'sync_rev', rev, tabId: TAB_INSTANCE_ID });
+
+            await this._txDone(tx);
+            _idbOutboxCache = outboxEntries;
+            _idbDeadLetterCache = deadLetters;
+            _memoryTombstoneCache = tombstones;
+            _idbConflictCache = conflicts;
+            state._lastSyncRev = rev;
+            this._persistSyncMetaCache(meta);
+            this._ready = true;
+            return meta;
+          }
+
+          const { syncMeta, hadStaleInFlight } = await this._hydrateFromTx(tx);
+          if (hadStaleInFlight) {
+            this._writeStoreArray(tx.objectStore('outbox'), _idbOutboxCache);
+          }
+          await this._txDone(tx);
+          this._ready = true;
+          return syncMeta;
+        });
+      },
+      async reloadFromIdbIntoMemory() {
+        if (!this.isSupported()) return false;
+        return withStorageLock(async () => {
+          const db = await this.open();
+          const tx = db.transaction(IDB_ALL_STORES, 'readonly');
+          await this._hydrateFromTx(tx);
+          await this._txDone(tx);
+          return true;
+        });
+      },
+      async flushNow() {
+        await this._pendingFlush;
+        return this._flushInternal();
+      },
+      enqueueFlush() {
+        if (!this._ready || !this.isSupported()) return;
+        this._pendingFlush = this._pendingFlush
+          .then(() => this._flushInternal())
+          .catch((err) => console.warn('CatatKuotaIDB flush error:', err));
+      },
+      async _flushInternal() {
+        if (!this.isSupported()) return false;
+        return withStorageLock(async () => {
+          const db = await this.open();
+          const tx = db.transaction(IDB_ALL_STORES, 'readwrite');
+          const rev = Date.now();
+          const meta = state._syncMeta ? { ...state._syncMeta, idb_migrated: true } : this._defaultSyncMeta();
+          this._writeStoreArray(tx.objectStore('customers'), state.customers || []);
+          this._writeStoreArray(tx.objectStore('logs'), state.logs || []);
+          this._writeStoreArray(tx.objectStore('warehouseLogs'), state.warehouseLogs || []);
+          this._writeStoreArray(tx.objectStore('outbox'), OutboxManager.getEntries());
+          this._writeStoreArray(tx.objectStore('dead_letter'), OutboxManager.getDeadLetterEntries());
+          this._writeStoreArray(tx.objectStore('tombstones'), getTombstones().map((t) => ({ idKey: `${t.type}:${t.id}`, ...t })));
+          this._writeStoreArray(tx.objectStore('conflict_review'), ConflictReviewManager.getEntries());
+          const metaStore = tx.objectStore('settings_and_meta');
+          metaStore.put({ key: 'settings', value: state.settings });
+          metaStore.put({ key: 'doSeqTracker', value: state.doSeqTracker || {} });
+          metaStore.put(meta);
+          metaStore.put({ key: 'sync_rev', rev, tabId: TAB_INSTANCE_ID });
+          await this._txDone(tx);
+          state._lastSyncRev = rev;
+          this._persistSyncMetaCache(meta);
+          this._notifyOtherTabs(rev);
+          return true;
+        });
+      },
+      async commitReconciliationAtomically(reconcileFn) {
+        return withStorageLock(async () => {
+          const memorySnapshot = {
+            customers: (state.customers || []).slice(),
+            logs: (state.logs || []).slice(),
+            warehouseLogs: (state.warehouseLogs || []).slice(),
+            outbox: OutboxManager.getEntries(),
+            deadLetter: OutboxManager.getDeadLetterEntries(),
+            tombstones: getTombstones(),
+            conflicts: ConflictReviewManager.getEntries(),
+            syncMeta: state._syncMeta ? { ...state._syncMeta } : this._readLocalSyncMeta(),
+          };
+
+          if (!this.isSupported()) {
+            const result = reconcileFn(memorySnapshot, memorySnapshot);
+            state.customers = result.customers;
+            state.logs = result.logs;
+            state.warehouseLogs = result.warehouseLogs;
+            _memoryTombstoneCache = result.tombstones;
+            try { localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(result.tombstones)); } catch (e) {}
+            this._persistSyncMetaCache(result.syncMeta);
+            persistState();
+            return result;
+          }
+
+          const db = await this.open();
+          const tx = db.transaction(IDB_ALL_STORES, 'readwrite');
+          const [
+            custRows, logRows, whRows, outboxRows, dlRows, tombRows, conflictRows, syncMetaRow
+          ] = await Promise.all([
+            this._reqP(tx.objectStore('customers').getAll()),
+            this._reqP(tx.objectStore('logs').getAll()),
+            this._reqP(tx.objectStore('warehouseLogs').getAll()),
+            this._reqP(tx.objectStore('outbox').getAll()),
+            this._reqP(tx.objectStore('dead_letter').getAll()),
+            this._reqP(tx.objectStore('tombstones').getAll()),
+            this._reqP(tx.objectStore('conflict_review').getAll()),
+            this._reqP(tx.objectStore('settings_and_meta').get('sync_meta')),
+          ]);
+
+          const liveSnapshot = {
+            customers: custRows || [],
+            logs: logRows || [],
+            warehouseLogs: whRows || [],
+            outbox: outboxRows || [],
+            deadLetter: dlRows || [],
+            tombstones: (tombRows || []).map(({ idKey, ...rest }) => rest),
+            conflicts: conflictRows || [],
+            syncMeta: syncMetaRow ? { ...this._defaultSyncMeta(), ...syncMetaRow } : memorySnapshot.syncMeta,
+          };
+
+          const result = reconcileFn(liveSnapshot, memorySnapshot);
+          const rev = Date.now();
+          const finalMeta = { ...result.syncMeta, key: 'sync_meta', idb_migrated: true };
+
+          this._writeStoreArray(tx.objectStore('customers'), result.customers);
+          this._writeStoreArray(tx.objectStore('logs'), result.logs);
+          this._writeStoreArray(tx.objectStore('warehouseLogs'), result.warehouseLogs);
+          this._writeStoreArray(tx.objectStore('tombstones'), (result.tombstones || []).map((t) => ({ idKey: `${t.type}:${t.id}`, ...t })));
+          const metaStore = tx.objectStore('settings_and_meta');
+          metaStore.put(finalMeta);
+          metaStore.put({ key: 'sync_rev', rev, tabId: TAB_INSTANCE_ID });
+
+          await this._txDone(tx);
+
+          state.customers = result.customers;
+          state.logs = result.logs;
+          state.warehouseLogs = result.warehouseLogs;
+          _idbOutboxCache = liveSnapshot.outbox;
+          _idbDeadLetterCache = liveSnapshot.deadLetter;
+          _memoryTombstoneCache = result.tombstones;
+          _idbConflictCache = liveSnapshot.conflicts;
+          state._lastSyncRev = rev;
+          this._persistSyncMetaCache(finalMeta);
+          try {
+            localStorage.setItem(TOMBSTONE_STORAGE_KEY, JSON.stringify(result.tombstones || []));
+            localStorage.setItem(STORAGE_KEYS.SYNC_REV, JSON.stringify({ rev, tabId: TAB_INSTANCE_ID }));
+          } catch (e) {}
+          this._notifyOtherTabs(rev);
+          return result;
+        });
+      },
+    };
+
+    try {
+      if (typeof BroadcastChannel === 'function') {
+        _syncBroadcastChannel = new BroadcastChannel('catat_kuota_kk_sync_v4');
+        _syncBroadcastChannel.addEventListener('message', (ev) => {
+          const msg = ev && ev.data;
+          if (!msg || msg.tabId === TAB_INSTANCE_ID) return;
+          if (msg.type === 'STATE_COMMITTED') {
+            Promise.resolve().then(async () => {
+              if (CatatKuotaIDB.isSupported()) {
+                await CatatKuotaIDB.reloadFromIdbIntoMemory();
+              } else {
+                syncLatestFromLocalStorage();
+              }
+              if (typeof refreshAllUI === 'function') {
+                try { refreshAllUI(); } catch (e) {}
+              }
+            });
+          }
+        });
+      }
+    } catch (e) {}
+
+    // =========================================================================
     // 2B. OUTBOX MANAGER (PERSISTENT CLIENT-SIDE TRANSACTION OUTBOX)
     // =========================================================================
     const OutboxManager = window.OutboxManager = {
       getEntries() {
+        if (CatatKuotaIDB.isSupported() && Array.isArray(_idbOutboxCache)) {
+          return _idbOutboxCache.slice();
+        }
         try {
           const raw = localStorage.getItem(STORAGE_KEYS.OUTBOX);
           return raw ? JSON.parse(raw) : [];
@@ -4513,13 +4965,18 @@ const INDONESIA_REGIONS = {
         }
       },
       saveEntries(entries) {
+        _idbOutboxCache = Array.isArray(entries) ? entries.slice() : [];
         try {
-          localStorage.setItem(STORAGE_KEYS.OUTBOX, JSON.stringify(entries));
+          localStorage.setItem(STORAGE_KEYS.OUTBOX, JSON.stringify(_idbOutboxCache));
         } catch (e) {
           console.warn('Gagal menyimpan outbox:', e);
         }
+        CatatKuotaIDB.enqueueFlush();
       },
       getDeadLetterEntries() {
+        if (CatatKuotaIDB.isSupported() && Array.isArray(_idbDeadLetterCache)) {
+          return _idbDeadLetterCache.slice();
+        }
         try {
           const raw = localStorage.getItem(STORAGE_KEYS.DEAD_LETTER);
           return raw ? JSON.parse(raw) : [];
@@ -4528,11 +4985,13 @@ const INDONESIA_REGIONS = {
         }
       },
       saveDeadLetterEntries(entries) {
+        _idbDeadLetterCache = Array.isArray(entries) ? entries.slice() : [];
         try {
-          localStorage.setItem(STORAGE_KEYS.DEAD_LETTER, JSON.stringify(entries));
+          localStorage.setItem(STORAGE_KEYS.DEAD_LETTER, JSON.stringify(_idbDeadLetterCache));
         } catch (e) {
           console.warn('Gagal menyimpan dead-letter:', e);
         }
+        CatatKuotaIDB.enqueueFlush();
       },
       add(type, requestId, payload, metadata = {}) {
         const entries = this.getEntries();
@@ -4540,12 +4999,20 @@ const INDONESIA_REGIONS = {
         if (existing) {
           return existing;
         }
+        const sess = typeof getAuthSession === 'function' ? getAuthSession() : null;
+        const operatorUid = metadata.operatorUid || (sess && sess.user_id) || null;
+        const operatorEmail = metadata.operatorEmail || (sess && sess.email) || (typeof state !== 'undefined' && state.operatorName) || null;
         const newEntry = {
           id: requestId,
           requestId,
           type,
           payload,
-          metadata,
+          metadata: {
+            localHandoverAt: new Date().toISOString(),
+            ...metadata,
+          },
+          operatorUid,
+          operatorEmail,
           createdAt: new Date().toISOString(),
           retryCount: 0,
           lastError: null,
@@ -4570,6 +5037,34 @@ const INDONESIA_REGIONS = {
           entry.lastAttemptAt = new Date().toISOString();
           this.saveEntries(entries);
         }
+      },
+      markAwaitingOriginalOperator(requestId, ownerEmailOrUid, message) {
+        const entries = this.getEntries();
+        const entry = entries.find((e) => e.requestId === requestId);
+        if (entry) {
+          entry.status = 'awaiting_original_operator';
+          entry.blockedForOperator = ownerEmailOrUid || entry.operatorUid || null;
+          entry.lastError = {
+            message: message || 'Menunggu login operator asal untuk menyelesaikan antrean ini.',
+            code: 'AWAITING_ORIGINAL_OPERATOR',
+            status: 403,
+            time: new Date().toISOString(),
+          };
+          this.saveEntries(entries);
+        }
+      },
+      recoverStaleInFlightEntries() {
+        const entries = this.getEntries();
+        let changed = false;
+        const recovered = entries.map((e) => {
+          if (e && e.status === 'in_flight') {
+            changed = true;
+            return { ...e, status: 'pending' };
+          }
+          return e;
+        });
+        if (changed) this.saveEntries(recovered);
+        return changed;
       },
       markFailed(requestId, error, isTerminal = false) {
         const entries = this.getEntries();
@@ -4620,12 +5115,18 @@ const INDONESIA_REGIONS = {
     ];
     const TERMINAL_HTTP_STATUSES = [400, 401, 403, 404, 409];
     const RETRYABLE_HTTP_STATUSES = [408, 429, 500, 502, 503, 504];
+    const RETRYABLE_SQLSTATES = ['40P01', '40001', '55P03'];
 
     function isRetryableRpcError(error) {
       if (!error) return false;
       const statusNum = Number(error.status) || (Number(error.code) ? Number(error.code) : null);
-      const codeStr = String(error.code || '').trim();
+      const codeStr = String(error.code || '').trim().toUpperCase();
       const msg = String(error.message || '');
+
+      // 0. Deadlock / serialization failure SQLSTATE (selalu retryable dengan backoff)
+      if (RETRYABLE_SQLSTATES.includes(codeStr)) {
+        return true;
+      }
 
       // 1. Timeout / Abort / ETIMEDOUT
       if (
@@ -4664,6 +5165,10 @@ const INDONESIA_REGIONS = {
       if (!error) return false;
       const codeStr = String(error.code || '').trim().toUpperCase();
       const statusNum = Number(error.status) || (Number(error.code) ? Number(error.code) : null);
+
+      if (RETRYABLE_SQLSTATES.includes(codeStr)) {
+        return false;
+      }
 
       if (TERMINAL_SQLSTATES.includes(codeStr)) {
         return true;
@@ -4741,6 +5246,7 @@ const INDONESIA_REGIONS = {
 
       const resRev = safeReadStorageJSON(STORAGE_KEYS.SYNC_REV, null, isPlainObj);
       state._lastSyncRev = (resRev.value && typeof resRev.value.rev === 'number') ? resRev.value.rev : 0;
+      state._syncMeta = CatatKuotaIDB._readLocalSyncMeta();
 
       migrateState(storedVersion);
       try {
@@ -4790,6 +5296,12 @@ const INDONESIA_REGIONS = {
         version = 3;
       }
 
+      // v3 -> v4: pastikan _syncMeta terinisialisasi bersih untuk Expand sync RPC
+      if (version < 4) {
+        state._syncMeta = state._syncMeta || CatatKuotaIDB._readLocalSyncMeta();
+        version = 4;
+      }
+
       if (!hasData) {
         state.doSeqTracker = state.doSeqTracker || {};
       }
@@ -4800,16 +5312,23 @@ const INDONESIA_REGIONS = {
       try {
         const revPayload = { rev: Date.now(), tabId: TAB_INSTANCE_ID };
         localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(state.settings));
-        localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(state.customers));
-        localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(state.logs));
-        localStorage.setItem(STORAGE_KEYS.WAREHOUSE, JSON.stringify(state.warehouseLogs));
+        if (!CatatKuotaIDB.isSupported() || !state._syncMeta || !state._syncMeta.idb_migrated) {
+          localStorage.setItem(STORAGE_KEYS.CUSTOMERS, JSON.stringify(state.customers));
+          localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(state.logs));
+          localStorage.setItem(STORAGE_KEYS.WAREHOUSE, JSON.stringify(state.warehouseLogs));
+        }
         localStorage.setItem(STORAGE_KEYS.DO_SEQ, JSON.stringify(state.doSeqTracker || {}));
         localStorage.setItem(STORAGE_KEYS.SYNC_REV, JSON.stringify(revPayload));
+        if (state._syncMeta) {
+          localStorage.setItem(STORAGE_KEYS.SYNC_META, JSON.stringify(state._syncMeta));
+        }
         state._lastSyncRev = revPayload.rev;
+        CatatKuotaIDB.enqueueFlush();
         return true;
       } catch (e) {
         console.error('persistState gagal menulis ke localStorage:', e);
-        if (typeof showToast === 'function') {
+        CatatKuotaIDB.enqueueFlush();
+        if (typeof showToast === 'function' && (!CatatKuotaIDB.isSupported() || !state._syncMeta || !state._syncMeta.idb_migrated)) {
           const isQuota = e && (e.name === 'QuotaExceededError' || e.code === 22);
           showToast(
             isQuota
@@ -4913,6 +5432,11 @@ const INDONESIA_REGIONS = {
     // 6. KALKULASI SALDO STOK GUDANG (GR vs GI)
     // =========================================================================
     function getWarehouseStockSummary() {
+      const rawLogs = Array.isArray(state.warehouseLogs) ? state.warehouseLogs : [];
+      const syncMeta = state._syncMeta || null;
+      const isCashierOnly = state.currentUserRole === 'cashier';
+      const stockRestricted = isCashierOnly && rawLogs.length === 0 && (!syncMeta || syncMeta.server_stock_summary === null);
+
       let berasInitial = 0;
       let berasGR = 0;
       let berasGI = 0;
@@ -4920,7 +5444,7 @@ const INDONESIA_REGIONS = {
       let gasGR = 0;
       let gasGI = 0;
 
-      state.warehouseLogs.forEach((m) => {
+      rawLogs.forEach((m) => {
         if (m.is_void || Number(m.qty) <= 0) return;
         const q = Number(m.qty) || 0;
         if (m.item === 'beras') {
@@ -4934,9 +5458,16 @@ const INDONESIA_REGIONS = {
         }
       });
 
-      // Saldo Stok Fisik Real-time = INITIAL-STOCK + GR - GI
-      const berasStock = berasInitial + berasGR - berasGI;
-      const gasStock = gasInitial + gasGR - gasGI;
+      let berasStock = berasInitial + berasGR - berasGI;
+      let gasStock = gasInitial + gasGR - gasGI;
+
+      if (!stockRestricted && rawLogs.length === 0 && syncMeta && Array.isArray(syncMeta.server_stock_summary)) {
+        const bRow = syncMeta.server_stock_summary.find((s) => s.item === 'beras');
+        const gRow = syncMeta.server_stock_summary.find((s) => s.item === 'gas');
+        if (bRow) berasStock = Number(bRow.available) || 0;
+        if (gRow) gasStock = Number(gRow.available) || 0;
+      }
+
       const threshold = Number(state.settings.lowStockThreshold) || 20;
 
       return {
@@ -4944,16 +5475,19 @@ const INDONESIA_REGIONS = {
         berasGR, // Rekap penerimaan resmi DO pabrik (tidak tercampur stok opname awal)
         berasGI,
         berasStock,
-        berasLow: berasStock <= threshold,
-        berasDeficit: berasStock < 0,
+        berasDisplay: stockRestricted ? 'Validasi Server' : berasStock,
+        berasLow: !stockRestricted && berasStock <= threshold,
+        berasDeficit: !stockRestricted && berasStock < 0,
         gasInitial,
         gasGR, // Rekap penerimaan resmi DO pabrik
         gasGI,
         gasStock,
-        gasLow: gasStock <= threshold,
-        gasDeficit: gasStock < 0,
+        gasDisplay: stockRestricted ? 'Validasi Server' : gasStock,
+        gasLow: !stockRestricted && gasStock <= threshold,
+        gasDeficit: !stockRestricted && gasStock < 0,
+        stockRestricted,
         threshold,
-        anyLow: berasStock <= threshold || gasStock <= threshold,
+        anyLow: !stockRestricted && (berasStock <= threshold || gasStock <= threshold),
       };
     }
 
@@ -4963,8 +5497,8 @@ const INDONESIA_REGIONS = {
       const mobileDot = document.getElementById('mob-warehouse-alert-dot');
       const pinBadge = document.getElementById('nav-warehouse-pin-badge');
 
-      if (desktopDot) desktopDot.classList.toggle('hidden', !summary.anyLow);
-      if (mobileDot) mobileDot.classList.toggle('hidden', !summary.anyLow);
+      if (desktopDot) desktopDot.classList.toggle('hidden', summary.stockRestricted || !summary.anyLow);
+      if (mobileDot) mobileDot.classList.toggle('hidden', summary.stockRestricted || !summary.anyLow);
       if (pinBadge) {
         if (state.isAdminUnlocked) {
           pinBadge.classList.add('hidden');
@@ -5791,8 +6325,8 @@ const INDONESIA_REGIONS = {
         setRecordItemsDisabledState({
           berasRemaining: 0,
           gasRemaining: 0,
-          berasStock: stockSummary.berasStock,
-          gasStock: stockSummary.gasStock,
+          berasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.berasStock,
+          gasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.gasStock,
           berasCycleText: `Siklus ${state.settings.cycleDays} hari dari beli pertama`,
           gasCycleText: `Siklus ${state.settings.cycleDays} hari dari beli pertama`,
           isLocked: true,
@@ -5908,8 +6442,8 @@ const INDONESIA_REGIONS = {
         setRecordItemsDisabledState({
           berasRemaining: stats.beras.remaining,
           gasRemaining: stats.gas.remaining,
-          berasStock: stockSummary.berasStock,
-          gasStock: stockSummary.gasStock,
+          berasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.berasStock,
+          gasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.gasStock,
           berasCycleText: stats.beras.hasActiveCycle
             ? (stats.beras.remaining > 0 ? `Pulih ${formatShortDateID(stats.beras.lastValidDate)}` : `Kuota Baru ${formatShortDateID(stats.beras.nextCycleDate)}`)
             : `Siklus ${state.settings.cycleDays} Hari`,
@@ -6054,8 +6588,8 @@ const INDONESIA_REGIONS = {
         setRecordItemsDisabledState({
           berasRemaining: bMax,
           gasRemaining: gMax,
-          berasStock: stockSummary.berasStock,
-          gasStock: stockSummary.gasStock,
+          berasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.berasStock,
+          gasStock: stockSummary.stockRestricted ? 'Validasi Server' : stockSummary.gasStock,
           berasCycleText: 'Belum mulai siklus',
           gasCycleText: 'Belum mulai siklus',
           isLocked: false,
@@ -6425,13 +6959,13 @@ const INDONESIA_REGIONS = {
       }
 
       // Guard Stok Gudang: cegah pencatatan pengambilan melebihi saldo stok fisik.
-      // Tanpa guard ini, stok gudang bisa minus dan audit barang tidak balance.
+      // Untuk cashier tanpa akses read stok mentah (stockRestricted), validasi fisik ditangani atomik oleh RPC server.
       const stockGuard = getWarehouseStockSummary();
-      if (qBeras > stockGuard.berasStock) {
+      if (!stockGuard.stockRestricted && qBeras > stockGuard.berasStock) {
         showToast(`Stok Beras gudang tidak cukup (tersedia ${stockGuard.berasStock}, diminta ${qBeras}). Catat penerimaan (GR) terlebih dahulu.`, 'error');
         return;
       }
-      if (qGas > stockGuard.gasStock) {
+      if (!stockGuard.stockRestricted && qGas > stockGuard.gasStock) {
         showToast(`Stok Gas gudang tidak cukup (tersedia ${stockGuard.gasStock}, diminta ${qGas}). Catat penerimaan (GR) terlebih dahulu.`, 'error');
         return;
       }
@@ -6444,7 +6978,11 @@ const INDONESIA_REGIONS = {
           isSubmittingRecord = true;
 
           // Re-sync penyimpanan lokal tepat sebelum commit agar transaksi dari tab lain tidak tertimpa
-          syncLatestFromLocalStorage();
+          if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB.isSupported && CatatKuotaIDB.isSupported() && CatatKuotaIDB._ready) {
+            await CatatKuotaIDB.reloadFromIdbIntoMemory();
+          } else {
+            syncLatestFromLocalStorage();
+          }
 
           // Re-validasi kuota pelanggan setelah sync tab lokal
           const quotaNow = getCustomerQuotaStats(customer.no_kk, txDateStr);
@@ -6458,7 +6996,7 @@ const INDONESIA_REGIONS = {
           // Re-validasi stok tepat sebelum commit: cegah dua petugas mencatat
           // pengambilan bersamaan hingga stok gudang minus.
           const stockNow = getWarehouseStockSummary();
-          if (qBeras > stockNow.berasStock || qGas > stockNow.gasStock) {
+          if (!stockNow.stockRestricted && (qBeras > stockNow.berasStock || qGas > stockNow.gasStock)) {
             refreshAllUI();
             showToast('Transaksi dibatalkan: stok gudang berubah dan tidak lagi mencukupi (Stock Guard)!', 'error');
             isSubmittingRecord = false;
@@ -6573,7 +7111,33 @@ const INDONESIA_REGIONS = {
               console.error('Dispense RPC error:', err);
               const isTerminal = isTerminalRpcError(err);
               OutboxManager.markFailed(requestId, err, isTerminal);
-              showToast(err.message, 'error');
+              if (!isTerminal) {
+                state.logs.unshift({
+                  id: newLogId,
+                  request_id: requestId,
+                  date: txDateStr,
+                  time: timeStr,
+                  no_kk: customer.no_kk,
+                  nama: customer.nama,
+                  member_id: memberId,
+                  qty_beras: qBeras,
+                  qty_gas: qGas,
+                  total_pcs: qBeras + qGas,
+                  status: 'PENDING_OUTBOX',
+                  is_dirty: true,
+                  local_updated_at: nowISO,
+                });
+                state.record.qtyBeras = 0;
+                state.record.qtyGas = 0;
+                state.record.newCustomerName = '';
+                state.record.newCustomerDetail = '';
+                persistState();
+                refreshAllUI();
+                showToast('Koneksi terputus/timeout. Transaksi disimpan ke antrean outbox offline (MENUNGGU SINKRONISASI).', 'warning');
+              } else {
+                refreshAllUI();
+                showToast(err.message, 'error');
+              }
             } finally {
               isSubmittingRecord = false;
             }
@@ -7296,11 +7860,7 @@ const INDONESIA_REGIONS = {
       // Lock instan saat tab disembunyikan / perangkat ditinggal (poin 46).
       // Timer inaktivitas saja tidak cukup: browser akan menunda setTimeout pada
       // tab background, sehingga gudang bisa tetap terbuka berjam-jam.
-      document.addEventListener('visibilitychange', () => {
-        if (document.hidden && state.isAdminUnlocked) {
-          lockAdminSession('Tab ditinggalkan. Akses gudang otomatis terkunci.');
-        }
-      });
+      /* Patched: tidak mengunci akses gudang saat pindah tab browser (inactivity 10 menit tetap aktif) */
 
       window.addEventListener('pagehide', () => {
         if (state.isAdminUnlocked) {
@@ -7781,8 +8341,8 @@ const INDONESIA_REGIONS = {
         document.getElementById('edit-log-kk').textContent = formatKKMasked(target.no_kk);
         document.getElementById('edit-log-reason').value = target.revisi_note || '';
 
-        document.getElementById('edit-log-beras-limit').textContent = `Maks. kuota pelanggan: ${effectiveMaxBeras} sak (Stok gudang: ${availStockBeras})`;
-        document.getElementById('edit-log-gas-limit').textContent = `Maks. kuota pelanggan: ${effectiveMaxGas} tabung (Stok gudang: ${availStockGas})`;
+        document.getElementById('edit-log-beras-limit').textContent = `Maks. kuota pelanggan: ${effectiveMaxBeras} sak (Stok gudang: ${stock.stockRestricted ? 'Validasi Server' : availStockBeras})`;
+        document.getElementById('edit-log-gas-limit').textContent = `Maks. kuota pelanggan: ${effectiveMaxGas} tabung (Stok gudang: ${stock.stockRestricted ? 'Validasi Server' : availStockGas})`;
 
         renderEditLogModalVisual();
 
@@ -7869,11 +8429,11 @@ const INDONESIA_REGIONS = {
       const oldGasEdit = Number(logTarget.qty_gas || 0);
       const availStockBerasEdit = stockNowEdit.berasStock + oldBerasEdit;
       const availStockGasEdit = stockNowEdit.gasStock + oldGasEdit;
-      if (qBeras > oldBerasEdit && qBeras > availStockBerasEdit) {
+      if (!stockNowEdit.stockRestricted && qBeras > oldBerasEdit && qBeras > availStockBerasEdit) {
         showToast(`Revisi ditolak: Stok Beras gudang tidak mencukupi (maks. ${Math.max(0, availStockBerasEdit)}, diminta ${qBeras}).`, 'error');
         return;
       }
-      if (qGas > oldGasEdit && qGas > availStockGasEdit) {
+      if (!stockNowEdit.stockRestricted && qGas > oldGasEdit && qGas > availStockGasEdit) {
         showToast(`Revisi ditolak: Stok Gas gudang tidak mencukupi (maks. ${Math.max(0, availStockGasEdit)}, diminta ${qGas}).`, 'error');
         return;
       }
@@ -9267,6 +9827,22 @@ const INDONESIA_REGIONS = {
               >
                 <i data-lucide="log-in" class="w-4 h-4 text-emerald-400"></i>
                 <span>Login Petugas Gudang</span>
+              </button>
+            </div>
+          `;
+        } else if (["supervisor", "warehouse_admin", "admin"].includes(String(session.role || "").toLowerCase())) {
+          gateEl.innerHTML = `
+            <div class="w-12 h-12 mx-auto rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-700 flex items-center justify-center shadow-2xs">
+              <i data-lucide="lock" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Sesi Gudang Terkunci</h3>
+              <p class="text-xs text-slate-500 mt-1">Akses gudang terkunci otomatis karena tidak ada aktivitas. Klik tombol di bawah untuk membuka kembali.</p>
+            </div>
+            <div>
+              <button type="button" onclick="state.isAdminUnlocked = true; resetAdminInactivityTimer(); renderWarehouseTab();" class="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-2xs transition cursor-pointer">
+                <i data-lucide="unlock" class="w-4 h-4 text-emerald-400"></i>
+                <span>Buka Kembali Akses Gudang</span>
               </button>
             </div>
           `;
@@ -11307,7 +11883,62 @@ const INDONESIA_REGIONS = {
         'p_operator_id',
         'p_custom_mutation_id',
       ],
+      get_operational_snapshot_page_v4: [
+        'p_section',
+        'p_after_pk',
+        'p_snapshot_anchor_seq',
+        'p_page_limit',
+        'p_client_feed_epoch',
+        'p_snapshot_cutoff_date',
+      ],
+      get_operational_sync_data_v4: [
+        'p_since_seq',
+        'p_scan_limit',
+        'p_client_feed_epoch',
+      ],
+      verify_customer_registration_v4: [
+        'p_request_id',
+        'p_no_kk',
+      ],
+      report_offline_reconciliation_conflict: [
+        'p_request_id',
+        'p_no_kk',
+        'p_qty_beras',
+        'p_qty_gas',
+        'p_conflict_code',
+        'p_local_handover_at',
+        'p_client_payload',
+      ],
+      issue_kiosk_token: [
+        'p_no_kk',
+        'p_expires_days',
+      ],
+      revoke_kiosk_token: [
+        'p_no_kk',
+        'p_token_hash',
+        'p_reason',
+      ],
     };
+
+    async function callRpcWithDeadlockRetry(rpcFn, maxAttempts = 3) {
+      let attempt = 0;
+      while (true) {
+        try {
+          return await rpcFn();
+        } catch (err) {
+          attempt++;
+          const codeStr = String(err && err.code ? err.code : '').trim().toUpperCase();
+          const isDeadlock = RETRYABLE_SQLSTATES.includes(codeStr) ||
+            (err && /deadlock detected/i.test(String(err.message || '')));
+          if (!isDeadlock || attempt >= maxAttempts) {
+            throw err;
+          }
+          const jitterMs = 100 + Math.floor(Math.random() * 250) * attempt;
+          console.warn(`RPC transient lock (${codeStr || 'LOCK'}) percobaan #${attempt}, mengulang dlm ${jitterMs}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, jitterMs));
+        }
+      }
+    }
 
     function assertRpcPayloadContract(rpcName, payload) {
       const expectedParams = RPC_SIGNATURE_CONTRACTS[rpcName];
@@ -11486,6 +12117,9 @@ const INDONESIA_REGIONS = {
         showToast('Akun berhasil login tetapi belum memiliki role operasional. Hubungi administrator.', 'warning');
       } else {
         showToast(`Login berhasil sebagai ${session.email} (${session.role}).`, 'success');
+        if (typeof syncWithSupabase === 'function') {
+          syncWithSupabase(true).catch((e) => console.warn('Sync pasca-login gagal:', e));
+        }
       }
 
       return session;
@@ -11939,19 +12573,54 @@ const INDONESIA_REGIONS = {
 
     async function processOutboxQueue() {
       const entries = (typeof OutboxManager !== 'undefined' && OutboxManager.getEntries) ? OutboxManager.getEntries() : [];
-      const pendingEntries = entries.filter((e) => e.status !== 'failed_terminal');
+      const session = getAuthSession();
+      const currentRole = session ? session.role : null;
+      const currentUid = session ? session.user_id : null;
+
+      // Aktifkan kembali antrean operator asal jika operator asal telah login kembali
+      let unlockedAny = false;
+      const normalizedEntries = entries.map((e) => {
+        if (e && e.status === 'awaiting_original_operator' && e.operatorUid && currentUid && e.operatorUid === currentUid) {
+          unlockedAny = true;
+          return { ...e, status: 'pending' };
+        }
+        return e;
+      });
+      if (unlockedAny && typeof OutboxManager !== 'undefined' && OutboxManager.saveEntries) {
+        OutboxManager.saveEntries(normalizedEntries);
+      }
+
+      const pendingEntries = normalizedEntries.filter((e) => e.status !== 'failed_terminal' && e.status !== 'awaiting_original_operator');
       if (pendingEntries.length === 0) {
-        return { total: 0, success: 0, failed: 0, errors: [] };
+        const awaitingCount = normalizedEntries.filter((e) => e.status === 'awaiting_original_operator').length;
+        return { total: 0, success: 0, failed: 0, awaitingOperator: awaitingCount, errors: [] };
       }
 
       console.info(`Memproses antrean outbox: ${pendingEntries.length} transaksi tertunda.`);
       let successCount = 0;
       let failCount = 0;
+      let awaitingCount = normalizedEntries.filter((e) => e.status === 'awaiting_original_operator').length;
       const errors = [];
-      const session = getAuthSession();
-      const currentRole = session ? session.role : null;
 
       for (const entry of pendingEntries) {
+        // Operator Handoff Guard: hanya operator asal yang boleh mengeksekusi antrean offline miliknya
+        if (entry.operatorUid && currentUid && entry.operatorUid !== currentUid) {
+          OutboxManager.markAwaitingOriginalOperator(
+            entry.requestId,
+            entry.operatorEmail || entry.operatorUid,
+            `Antrean offline dibuat oleh operator ${entry.operatorEmail || entry.operatorUid}. Login ulang sebagai operator tersebut untuk sinkronisasi.`
+          );
+          awaitingCount++;
+          failCount++;
+          errors.push({
+            id: entry.requestId,
+            type: entry.type,
+            status: 'awaiting_original_operator',
+            message: `Menunggu operator asal (${entry.operatorEmail || entry.operatorUid})`,
+          });
+          continue;
+        }
+
         // Cek izin peran khusus mutasi gudang agar akun cashier tidak terbentur 403 berulang
         if (entry.type === 'process_warehouse_mutation' && (!currentRole || !['supervisor', 'warehouse_admin', 'admin'].includes(currentRole))) {
           failCount++;
@@ -12004,6 +12673,7 @@ const INDONESIA_REGIONS = {
             const targetCust = (state.customers || []).find((c) => c.no_kk === entry.payload.p_no_kk);
             if (targetCust) {
               targetCust.is_dirty = false;
+              targetCust.sync_status = 'SYNCED';
             } else {
               const reconstructedCust = {
                 member_id: (resData && resData.customer && resData.customer.member_id) || entry.payload.p_member_id,
@@ -12016,6 +12686,7 @@ const INDONESIA_REGIONS = {
                 detail: entry.payload.p_detail || '',
                 created_at: (entry.metadata && entry.metadata.created_at) || entry.createdAt || new Date().toISOString(),
                 is_dirty: false,
+                sync_status: 'SYNCED',
               };
               if (entry.metadata && entry.metadata.no_hp) {
                 reconstructedCust.no_hp = entry.metadata.no_hp;
@@ -12025,27 +12696,189 @@ const INDONESIA_REGIONS = {
           } else if (entry.type === 'process_quota_dispense') {
             await callProcessQuotaDispenseRPC(entry.payload);
             const targetLog = (state.logs || []).find((l) => l.request_id === entry.requestId || l.id === entry.payload.p_custom_log_id);
-            if (targetLog) targetLog.is_dirty = false;
+            if (targetLog) {
+              targetLog.is_dirty = false;
+              targetLog.status = 'COMPLETED';
+              targetLog.sync_status = 'SYNCED';
+            }
           } else if (entry.type === 'process_warehouse_mutation') {
             await callProcessWarehouseMutationRPC(entry.payload);
             const targetWh = (state.warehouseLogs || []).find((w) => w.request_id === entry.requestId || w.id === entry.payload.p_custom_mutation_id);
-            if (targetWh) targetWh.is_dirty = false;
+            if (targetWh) {
+              targetWh.is_dirty = false;
+              targetWh.sync_status = 'SYNCED';
+            }
           }
           OutboxManager.remove(entry.requestId);
           successCount++;
         } catch (err) {
           failCount++;
+          const errCode = String((err && err.code) || '').trim().toUpperCase();
           const isTerminal = isTerminalRpcError(err);
+
+          // Eskalasi konflik rekonsiliasi fisik/kuota offline ke server & antrean review lokal
+          if (entry.type === 'process_quota_dispense' && ['P0001', 'P0002', 'P0003', 'P0004'].includes(errCode)) {
+            const conflictRecord = {
+              request_id: entry.requestId,
+              no_kk: entry.payload && entry.payload.p_no_kk,
+              qty_beras: Number(entry.payload && entry.payload.p_qty_beras) || 0,
+              qty_gas: Number(entry.payload && entry.payload.p_qty_gas) || 0,
+              conflict_code: errCode,
+              local_handover_at: (entry.metadata && entry.metadata.localHandoverAt) || entry.createdAt || new Date().toISOString(),
+              message: err.message,
+              client_payload: entry.payload,
+            };
+            if (typeof ConflictReviewManager !== 'undefined') {
+              ConflictReviewManager.add(conflictRecord);
+            }
+            const targetLog = (state.logs || []).find((l) => l.request_id === entry.requestId || l.id === (entry.payload && entry.payload.p_custom_log_id));
+            if (targetLog) {
+              targetLog.status = 'CONFLICT_RECONCILIATION_REQUIRED';
+              targetLog.sync_status = 'CONFLICT_RECONCILIATION_REQUIRED';
+              targetLog.is_dirty = false;
+            }
+            if (typeof callReportOfflineReconciliationConflictRPC === 'function') {
+              callReportOfflineReconciliationConflictRPC({
+                p_request_id: conflictRecord.request_id,
+                p_no_kk: conflictRecord.no_kk,
+                p_qty_beras: conflictRecord.qty_beras,
+                p_qty_gas: conflictRecord.qty_gas,
+                p_conflict_code: conflictRecord.conflict_code,
+                p_local_handover_at: conflictRecord.local_handover_at,
+                p_client_payload: conflictRecord.client_payload,
+              }).catch((escErr) => console.warn('Eskalasi konflik offline tertunda:', escErr.message || escErr));
+            }
+          }
+
           OutboxManager.markFailed(entry.requestId, err, isTerminal);
           errors.push({ id: entry.requestId, type: entry.type, message: err.message || 'Eksekusi RPC gagal', isTerminal });
           console.warn(`Outbox ${entry.type} [${entry.requestId}] gagal (${isTerminal ? 'TERMINAL' : 'RETRYABLE'}):`, err.message || err.code || err.status);
         }
       }
 
-      if (successCount > 0) {
+      if (successCount > 0 || unlockedAny) {
         persistState();
       }
-      return { total: pendingEntries.length, success: successCount, failed: failCount, errors };
+      return { total: pendingEntries.length, success: successCount, failed: failCount, awaitingOperator: awaitingCount, errors };
+    }
+
+    function normalizeCustomerRow(c) {
+      return {
+        no_kk: c.no_kk,
+        member_id: c.member_id || null,
+        nama: c.nama,
+        provinsi: c.provinsi || '',
+        kabupaten: c.kabupaten || '',
+        kecamatan: c.kecamatan || '',
+        desa: c.desa || '',
+        detail: c.detail || '',
+        created_at: c.created_at || null,
+        is_dirty: false,
+      };
+    }
+
+    function normalizeLogRow(l) {
+      return {
+        id: l.id,
+        request_id: l.request_id || null,
+        operator_id: l.operator_id || null,
+        date: l.date,
+        time: l.time,
+        member_id: l.member_id || null,
+        no_kk: l.no_kk,
+        nama: l.nama,
+        qty_beras: Number(l.qty_beras) || 0,
+        qty_gas: Number(l.qty_gas) || 0,
+        total_pcs: Number(l.total_pcs) || 0,
+        status: l.status || 'COMPLETED',
+        revisi_note: l.revisi_note || '',
+        created_at: l.created_at || null,
+        is_dirty: false,
+      };
+    }
+
+    function normalizeWarehouseRow(w) {
+      return {
+        id: w.id,
+        request_id: w.request_id || null,
+        date: w.date,
+        type: w.type,
+        item: w.item,
+        qty: Number(w.qty) || 0,
+        ref: w.ref || '',
+        logId: w.log_id || w.logId || null,
+        is_void: Boolean(w.is_void) || Number(w.qty) === 0,
+        created_at: w.created_at || null,
+        is_dirty: false,
+      };
+    }
+
+    async function invokeExpandSyncRpc(rpcName, payload, timeoutMs = 10000) {
+      assertRpcPayloadContract(rpcName, payload);
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+      const headers = await getSupabaseHeaders(key, true);
+      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/${rpcName}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }, timeoutMs);
+
+      if (!res.ok) {
+        let errData = {};
+        try { errData = await res.json(); } catch (e) { errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` }; }
+        const err = new Error(mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message));
+        err.code = errData.code || String(res.status);
+        err.status = res.status;
+        throw err;
+      }
+      return await res.json();
+    }
+
+    function getSnapshotSectionsForRole(role) {
+      if (role === 'cashier') return ['customers', 'logs'];
+      if (role === 'warehouse_admin') return ['warehouse_logs', 'stock_summary'];
+      if (role === 'supervisor' || role === 'admin') return ['customers', 'logs', 'warehouse_logs', 'stock_summary'];
+      return [];
+    }
+
+    function buildDirtyUnionMap(rowsA, rowsB, idKey, tombstoneSet) {
+      const dirtyMap = new Map();
+      const reviewMap = new Map();
+      for (const item of [...(rowsA || []), ...(rowsB || [])]) {
+        if (!item || !item[idKey]) continue;
+        const pk = item[idKey];
+        if (tombstoneSet && tombstoneSet.has(pk)) continue;
+        if (item.is_dirty) {
+          dirtyMap.set(pk, item);
+        } else if (item.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') {
+          reviewMap.set(pk, item);
+        }
+      }
+      return { dirtyMap, reviewMap };
+    }
+
+    function applyChangeFeedBatchToStaging(changes, stagingBuffer) {
+      for (const ch of (changes || [])) {
+        if (!ch || !ch.table_name) continue;
+        const isDelete = String(ch.action_type || '').toUpperCase() === 'DELETE';
+        const data = ch.record_data || {};
+        const pk = ch.record_id || data.no_kk || data.id;
+        if (!pk) continue;
+
+        if (ch.table_name === 'customers') {
+          if (isDelete) stagingBuffer.customers.delete(pk);
+          else stagingBuffer.customers.set(pk, normalizeCustomerRow(data));
+        } else if (ch.table_name === 'logs') {
+          if (isDelete) stagingBuffer.logs.delete(pk);
+          else stagingBuffer.logs.set(pk, normalizeLogRow(data));
+        } else if (ch.table_name === 'warehouse_logs') {
+          if (isDelete) stagingBuffer.warehouseLogs.delete(pk);
+          else stagingBuffer.warehouseLogs.set(pk, normalizeWarehouseRow(data));
+        }
+      }
     }
 
     async function syncWithSupabase(silent = false) {
@@ -12053,153 +12886,335 @@ const INDONESIA_REGIONS = {
         console.info('syncWithSupabase: sinkronisasi sedang berlangsung, request baru diabaikan.');
         return;
       }
+      if (!CatatKuotaIDB._ready) {
+        await CatatKuotaIDB.initAndMigrateFromLocalStorage();
+      }
       const { url, key } = getSupabaseConfig();
       if (!url || !key) {
         updateCloudStatusUI('offline', 'Kredensial Supabase belum diatur.');
         return;
       }
 
+      const session = getAuthSession();
+      if (!session || !session.access_token || !session.role || !VALID_OPERATIONAL_ROLES.includes(session.role)) {
+        updateCloudStatusUI('offline', 'Login petugas diperlukan untuk sinkronisasi cloud.');
+        return;
+      }
+
       isSyncing = true;
-      if (!silent) updateCloudStatusUI('syncing', 'Menghubungi database cloud Supabase...');
+      if (!silent) updateCloudStatusUI('syncing', 'Menghubungi RPC sinkronisasi terotorisasi...');
 
       try {
-        const headers = await getSupabaseHeaders(key, false);
+        const currentMeta = state._syncMeta || CatatKuotaIDB._readLocalSyncMeta();
+        const canAttemptDelta = Boolean(
+          currentMeta &&
+          Number(currentMeta.last_sync_seq) >= 1 &&
+          currentMeta.feed_epoch !== null &&
+          currentMeta.feed_epoch !== undefined &&
+          currentMeta.last_synced_role === session.role
+        );
 
-        // GET request dengan timeout 10 detik via AbortController
-        const [resCust, resLogs, resWh] = await Promise.all([
-          fetchWithTimeout(`${url}/rest/v1/customers?select=*`, { headers }, 10000),
-          fetchWithTimeout(`${url}/rest/v1/logs?select=*`, { headers }, 10000),
-          fetchWithTimeout(`${url}/rest/v1/warehouse_logs?select=*`, { headers }, 10000),
-        ]);
+        let completedDelta = false;
+        let syncedViaMode = 'snapshot';
 
-        if (!resCust.ok || !resLogs.ok || !resWh.ok) {
-          throw new Error(`Respon server GET error: Cust ${resCust.status}, Logs ${resLogs.status}, WH ${resWh.status}`);
+        if (canAttemptDelta) {
+          let cursor = Number(currentMeta.last_sync_seq);
+          let epoch = Number(currentMeta.feed_epoch);
+          const allChanges = [];
+          let lastDeltaRes = null;
+          let needsFullSnapshot = false;
+
+          for (let page = 0; page < 50; page++) {
+            const deltaRes = await invokeExpandSyncRpc('get_operational_sync_data_v4', {
+              p_since_seq: cursor,
+              p_scan_limit: 500,
+              p_client_feed_epoch: epoch,
+            }, 10000);
+
+            if (deltaRes.status === 'CURSOR_EXPIRED' || deltaRes.status === 'CURSOR_AHEAD_OF_HWM' || deltaRes.status === 'EPOCH_MISMATCH') {
+              needsFullSnapshot = true;
+              break;
+            }
+            if (deltaRes.status !== 'OK') {
+              throw new Error(`Status sync tidak terduga: ${deltaRes.status}`);
+            }
+            if (Array.isArray(deltaRes.changes) && deltaRes.changes.length > 0) {
+              allChanges.push(...deltaRes.changes);
+            }
+            lastDeltaRes = deltaRes;
+            cursor = Number(deltaRes.next_cursor);
+            epoch = Number(deltaRes.feed_epoch);
+            if (!deltaRes.has_more) break;
+          }
+
+          if (!needsFullSnapshot && lastDeltaRes) {
+            await CatatKuotaIDB.commitReconciliationAtomically((live, mem) => {
+              const allTombstones = [...(live.tombstones || []), ...(mem.tombstones || [])];
+              const tombLogIds = new Set(allTombstones.filter((t) => t.type === 'log').map((t) => t.id));
+              const tombCustKKs = new Set(allTombstones.filter((t) => t.type === 'customer').map((t) => t.id));
+              const tombWhIds = new Set(allTombstones.filter((t) => t.type === 'wh').map((t) => t.id));
+
+              const custMap = new Map();
+              (live.customers || []).forEach((c) => { if (!tombCustKKs.has(c.no_kk)) custMap.set(c.no_kk, c); });
+              (mem.customers || []).forEach((c) => { if (c.is_dirty && !tombCustKKs.has(c.no_kk)) custMap.set(c.no_kk, c); });
+
+              const logMap = new Map();
+              (live.logs || []).forEach((l) => { if (!tombLogIds.has(l.id)) logMap.set(l.id, l); });
+              (mem.logs || []).forEach((l) => { if (l.is_dirty && !tombLogIds.has(l.id)) logMap.set(l.id, l); });
+
+              const whMap = new Map();
+              (live.warehouseLogs || []).forEach((w) => { if (!tombWhIds.has(w.id)) whMap.set(w.id, w); });
+              (mem.warehouseLogs || []).forEach((w) => { if (w.is_dirty && !tombWhIds.has(w.id)) whMap.set(w.id, w); });
+
+              for (const ch of allChanges) {
+                const isDel = String(ch.action_type || '').toUpperCase() === 'DELETE';
+                const row = ch.record_data || {};
+                const pk = ch.record_id || row.no_kk || row.id;
+                if (!pk) continue;
+
+                if (ch.table_name === 'customers' && !tombCustKKs.has(pk)) {
+                  const existing = custMap.get(pk);
+                  if (existing && existing.is_dirty) continue;
+                  if (isDel) custMap.delete(pk);
+                  else custMap.set(pk, normalizeCustomerRow(row));
+                } else if (ch.table_name === 'logs' && !tombLogIds.has(pk)) {
+                  const existing = logMap.get(pk);
+                  if (existing && existing.is_dirty) continue;
+                  if (isDel) logMap.delete(pk);
+                  else logMap.set(pk, normalizeLogRow(row));
+                } else if (ch.table_name === 'warehouse_logs' && !tombWhIds.has(pk)) {
+                  const existing = whMap.get(pk);
+                  if (existing && existing.is_dirty) continue;
+                  if (isDel) whMap.delete(pk);
+                  else whMap.set(pk, normalizeWarehouseRow(row));
+                }
+              }
+
+              const hasStockPerm = ['warehouse_admin', 'supervisor', 'admin'].includes(session.role);
+              return {
+                customers: Array.from(custMap.values()),
+                logs: Array.from(logMap.values()),
+                warehouseLogs: hasStockPerm ? Array.from(whMap.values()) : Array.from(whMap.values()).filter((w) => w.is_dirty || w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED'),
+                tombstones: [],
+                syncMeta: {
+                  ...(live.syncMeta || currentMeta),
+                  last_sync_seq: Number(lastDeltaRes.next_cursor),
+                  feed_epoch: Number(lastDeltaRes.feed_epoch),
+                  server_stock_summary: lastDeltaRes.stock_summary !== undefined ? lastDeltaRes.stock_summary : null,
+                  last_synced_role: session.role,
+                  last_sync_at: new Date().toISOString(),
+                },
+              };
+            });
+            completedDelta = true;
+            syncedViaMode = 'delta';
+          }
         }
 
-        const cloudCust = await resCust.json();
-        const cloudLogs = await resLogs.json();
-        const cloudWh = await resWh.json();
+        if (!completedDelta) {
+          const sections = getSnapshotSectionsForRole(session.role);
+          let snapshotCommitted = false;
 
-        // Rekonsiliasi tombstone lokal jika ada
-        const tombstones = getTombstones();
-        const tombstoneLogIds = new Set(tombstones.filter((t) => t.type === 'log').map((t) => t.id));
-        const tombstoneCustKKs = new Set(tombstones.filter((t) => t.type === 'customer').map((t) => t.id));
-        const tombstoneWhIds = new Set(tombstones.filter((t) => t.type === 'wh').map((t) => t.id));
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const stagingBuffer = {
+              customers: new Map(),
+              logs: new Map(),
+              warehouseLogs: new Map(),
+              stockSummary: null,
+            };
+            let anchorSeq = null;
+            let feedEpoch = null;
+            let cutoffDate = null;
+            let restartNeeded = false;
 
-        const validCloudLogs = (cloudLogs || []).filter((l) => !tombstoneLogIds.has(l.id));
-        const validCloudCust = (cloudCust || []).filter((c) => !tombstoneCustKKs.has(c.no_kk));
-        const validCloudWh = (cloudWh || []).filter((w) => !tombstoneWhIds.has(w.id));
+            for (const section of sections) {
+              let afterPk = null;
+              for (let pageIdx = 0; pageIdx < 200; pageIdx++) {
+                const pageRes = await invokeExpandSyncRpc('get_operational_snapshot_page_v4', {
+                  p_section: section,
+                  p_after_pk: afterPk,
+                  p_snapshot_anchor_seq: anchorSeq,
+                  p_page_limit: 500,
+                  p_client_feed_epoch: feedEpoch,
+                  p_snapshot_cutoff_date: cutoffDate,
+                }, 10000);
 
-        // Rekonsiliasi data: Data lokal yang ditandai is_dirty memenangkan konflik atas data cloud
-        // 1. RECONCILE LOGS
-        const dirtyLocalLogsMap = new Map();
-        const nonDirtyLocalLogsMap = new Map();
-        (state.logs || []).forEach((l) => {
-          if (tombstoneLogIds.has(l.id)) return;
-          if (l.is_dirty) {
-            dirtyLocalLogsMap.set(l.id, l);
-          } else {
-            nonDirtyLocalLogsMap.set(l.id, l);
-          }
-        });
+                if (pageRes.status === 'SNAPSHOT_EXPIRED' || pageRes.status === 'EPOCH_MISMATCH') {
+                  restartNeeded = true;
+                  break;
+                }
+                if (pageRes.status !== 'OK') {
+                  throw new Error(`Snapshot gagal (${section}): ${pageRes.status}`);
+                }
 
-        const mergedLogsMap = new Map();
-        validCloudLogs.forEach((l) => {
-          const logId = l.id;
-          if (dirtyLocalLogsMap.has(logId)) {
-            mergedLogsMap.set(logId, dirtyLocalLogsMap.get(logId));
-          } else {
-            mergedLogsMap.set(logId, {
-              id: l.id,
-              date: l.date,
-              time: l.time,
-              no_kk: l.no_kk,
-              nama: l.nama,
-              qty_beras: Number(l.qty_beras) || 0,
-              qty_gas: Number(l.qty_gas) || 0,
-              total_pcs: Number(l.total_pcs) || 0,
-              revisi_note: l.revisi_note || '',
-              is_dirty: false,
+                if (anchorSeq === null) {
+                  anchorSeq = Number(pageRes.snapshot_anchor_seq);
+                  feedEpoch = Number(pageRes.feed_epoch);
+                  cutoffDate = pageRes.snapshot_cutoff_date || null;
+                }
+
+                const rows = Array.isArray(pageRes.rows) ? pageRes.rows : [];
+                if (section === 'customers') {
+                  for (const r of rows) stagingBuffer.customers.set(r.no_kk, normalizeCustomerRow(r));
+                } else if (section === 'logs') {
+                  for (const r of rows) stagingBuffer.logs.set(r.id, normalizeLogRow(r));
+                } else if (section === 'warehouse_logs') {
+                  for (const r of rows) stagingBuffer.warehouseLogs.set(r.id, normalizeWarehouseRow(r));
+                } else if (section === 'stock_summary') {
+                  stagingBuffer.stockSummary = rows;
+                }
+
+                if (!pageRes.has_more || !pageRes.next_after_pk) break;
+                afterPk = pageRes.next_after_pk;
+              }
+              if (restartNeeded) break;
+            }
+
+            if (restartNeeded) {
+              continue;
+            }
+
+            // Catch-up perubahan yang terjadi selama paginasi snapshot berlangsung
+            let finalCursor = anchorSeq;
+            let finalEpoch = feedEpoch;
+            let catchUpFailed = false;
+            if (anchorSeq !== null) {
+              for (let pageIdx = 0; pageIdx < 50; pageIdx++) {
+                const cuRes = await invokeExpandSyncRpc('get_operational_sync_data_v4', {
+                  p_since_seq: finalCursor,
+                  p_scan_limit: 500,
+                  p_client_feed_epoch: finalEpoch,
+                }, 10000);
+                if (cuRes.status === 'CURSOR_EXPIRED' || cuRes.status === 'CURSOR_AHEAD_OF_HWM' || cuRes.status === 'EPOCH_MISMATCH') {
+                  catchUpFailed = true;
+                  break;
+                }
+                if (cuRes.status !== 'OK') {
+                  throw new Error(`Catch-up sync gagal: ${cuRes.status}`);
+                }
+                applyChangeFeedBatchToStaging(cuRes.changes, stagingBuffer);
+                if (cuRes.stock_summary !== undefined) {
+                  stagingBuffer.stockSummary = cuRes.stock_summary;
+                }
+                finalCursor = Number(cuRes.next_cursor);
+                finalEpoch = Number(cuRes.feed_epoch);
+                if (!cuRes.has_more) break;
+              }
+            }
+
+            if (catchUpFailed) {
+              continue;
+            }
+
+            await CatatKuotaIDB.commitReconciliationAtomically((live, mem) => {
+              const allTombstones = [...(live.tombstones || []), ...(mem.tombstones || [])];
+              const tombLogIds = new Set(allTombstones.filter((t) => t.type === 'log').map((t) => t.id));
+              const tombCustKKs = new Set(allTombstones.filter((t) => t.type === 'customer').map((t) => t.id));
+              const tombWhIds = new Set(allTombstones.filter((t) => t.type === 'wh').map((t) => t.id));
+
+              const custProtect = buildDirtyUnionMap(live.customers, mem.customers, 'no_kk', tombCustKKs);
+              const logProtect = buildDirtyUnionMap(live.logs, mem.logs, 'id', tombLogIds);
+              const whProtect = buildDirtyUnionMap(live.warehouseLogs, mem.warehouseLogs, 'id', tombWhIds);
+
+              // Customers
+              let nextCustomers;
+              if (sections.includes('customers')) {
+                const m = new Map();
+                stagingBuffer.customers.forEach((c, pk) => { if (!tombCustKKs.has(pk)) m.set(pk, c); });
+                custProtect.reviewMap.forEach((c, pk) => { if (!m.has(pk)) m.set(pk, c); });
+                custProtect.dirtyMap.forEach((c, pk) => m.set(pk, c));
+                nextCustomers = Array.from(m.values());
+              } else {
+                const m = new Map();
+                custProtect.reviewMap.forEach((c, pk) => m.set(pk, c));
+                custProtect.dirtyMap.forEach((c, pk) => m.set(pk, c));
+                nextCustomers = Array.from(m.values());
+              }
+
+              // Logs (snapshot mencakup date >= cutoffDate; pertahankan bersih < cutoffDate + is_dirty)
+              let nextLogs;
+              if (sections.includes('logs')) {
+                const m = new Map();
+                stagingBuffer.logs.forEach((l, pk) => { if (!tombLogIds.has(pk)) m.set(pk, l); });
+                for (const l of [...(live.logs || []), ...(mem.logs || [])]) {
+                  if (!l || !l.id || tombLogIds.has(l.id)) continue;
+                  if (!l.is_dirty && cutoffDate && l.date && l.date < cutoffDate && !m.has(l.id)) {
+                    m.set(l.id, l);
+                  }
+                }
+                logProtect.reviewMap.forEach((l, pk) => { if (!m.has(pk)) m.set(pk, l); });
+                logProtect.dirtyMap.forEach((l, pk) => m.set(pk, l));
+                nextLogs = Array.from(m.values());
+              } else {
+                const m = new Map();
+                logProtect.reviewMap.forEach((l, pk) => m.set(pk, l));
+                logProtect.dirtyMap.forEach((l, pk) => m.set(pk, l));
+                nextLogs = Array.from(m.values());
+              }
+
+              // Warehouse logs (kosongkan cache gudang bersih bila role adalah cashier)
+              let nextWarehouseLogs;
+              if (sections.includes('warehouse_logs')) {
+                const m = new Map();
+                stagingBuffer.warehouseLogs.forEach((w, pk) => { if (!tombWhIds.has(pk)) m.set(pk, w); });
+                whProtect.reviewMap.forEach((w, pk) => { if (!m.has(pk)) m.set(pk, w); });
+                whProtect.dirtyMap.forEach((w, pk) => m.set(pk, w));
+                nextWarehouseLogs = Array.from(m.values());
+              } else {
+                const m = new Map();
+                whProtect.reviewMap.forEach((w, pk) => m.set(pk, w));
+                whProtect.dirtyMap.forEach((w, pk) => m.set(pk, w));
+                nextWarehouseLogs = Array.from(m.values());
+              }
+
+              const nowISO = new Date().toISOString();
+              return {
+                customers: nextCustomers,
+                logs: nextLogs,
+                warehouseLogs: nextWarehouseLogs,
+                tombstones: [],
+                syncMeta: {
+                  ...(live.syncMeta || currentMeta),
+                  last_sync_seq: finalCursor !== null ? finalCursor : 0,
+                  feed_epoch: finalEpoch !== null ? finalEpoch : null,
+                  server_stock_summary: sections.includes('stock_summary') ? stagingBuffer.stockSummary : null,
+                  last_synced_role: session.role,
+                  last_full_snapshot_at: nowISO,
+                  last_sync_at: nowISO,
+                },
+              };
             });
+            snapshotCommitted = true;
+            syncedViaMode = 'snapshot';
+            break;
           }
-        });
-        dirtyLocalLogsMap.forEach((l, id) => {
-          if (!mergedLogsMap.has(id)) mergedLogsMap.set(id, l);
-        });
-        nonDirtyLocalLogsMap.forEach((l, id) => {
-          if (!mergedLogsMap.has(id)) mergedLogsMap.set(id, l);
-        });
-        state.logs = Array.from(mergedLogsMap.values());
 
-        // 2. RECONCILE WAREHOUSE LOGS
-        const dirtyLocalWhMap = new Map();
-        const nonDirtyLocalWhMap = new Map();
-        (state.warehouseLogs || []).forEach((w) => {
-          if (tombstoneWhIds.has(w.id)) return;
-          if (w.is_dirty) {
-            dirtyLocalWhMap.set(w.id, w);
-          } else {
-            nonDirtyLocalWhMap.set(w.id, w);
+          if (!snapshotCommitted) {
+            throw new Error('Snapshot gagal karena perubahan bersamaan terus-menerus. Silakan coba sinkronkan lagi.');
           }
-        });
+        }
 
-        const mergedWhMap = new Map();
-        validCloudWh.forEach((w) => {
-          const whId = w.id;
-          if (dirtyLocalWhMap.has(whId)) {
-            mergedWhMap.set(whId, dirtyLocalWhMap.get(whId));
-          } else {
-            mergedWhMap.set(whId, {
-              id: w.id,
-              date: w.date,
-              type: w.type,
-              item: w.item,
-              qty: Number(w.qty) || 0,
-              ref: w.ref || '',
-              logId: w.log_id || null,
-              is_void: Number(w.qty) === 0,
-              is_dirty: false,
-            });
-          }
-        });
-        dirtyLocalWhMap.forEach((w, id) => {
-          if (!mergedWhMap.has(id)) mergedWhMap.set(id, w);
-        });
-        nonDirtyLocalWhMap.forEach((w, id) => {
-          if (!mergedWhMap.has(id)) mergedWhMap.set(id, w);
-        });
-        state.warehouseLogs = Array.from(mergedWhMap.values());
-
-        // 3. RECONCILE CUSTOMERS
-        const cloudKKs = new Set(validCloudCust.map((c) => c.no_kk));
-        const unsyncedLocalCust = (state.customers || []).filter((c) => !cloudKKs.has(c.no_kk) && !tombstoneCustKKs.has(c.no_kk));
-        state.customers = [...unsyncedLocalCust, ...validCloudCust];
-
-        persistState();
         refreshAllUI();
 
-        // 4. Bersihkan tombstone lokal
-        if (tombstones.length > 0) {
-          localStorage.removeItem(TOMBSTONE_STORAGE_KEY);
-        }
-
-        // 5. Proses antrean Outbox eksplisit (tanpa otomatis mengunggah data legacy/demo lokal)
+        // Proses antrean Outbox eksplisit (tanpa otomatis mengunggah data legacy/demo lokal)
         const outboxStats = await processOutboxQueue();
+        await CatatKuotaIDB.flushNow();
 
-        // 7. Evaluasi status UI akhir
+        // Evaluasi status UI akhir
         const remainingPending = OutboxManager.getEntries().filter((e) => e.status !== 'failed_terminal').length;
         const timeStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
 
         if (outboxStats.failed > 0 || remainingPending > 0) {
           const failCount = outboxStats.failed || remainingPending;
-          updateCloudStatusUI('warning', `Sinkron parsial pukul ${timeStr} WIB: ${failCount} item outbox tertunda.`);
+          const extraNote = outboxStats.awaitingOperator > 0 ? ` (${outboxStats.awaitingOperator} menunggu operator asal)` : '';
+          updateCloudStatusUI('warning', `Sinkron ${syncedViaMode} pukul ${timeStr} WIB: ${failCount} item outbox tertunda${extraNote}.`);
           if (!silent) {
-            showToast(`Data cloud terbaca (${cloudCust.length} KK, ${cloudLogs.length} Riwayat), namun ${failCount} item transaksi tertunda di outbox.`, 'warning');
+            showToast(`Data cloud tersinkron (${state.customers.length} KK, ${state.logs.length} Riwayat), namun ${failCount} item tertunda${extraNote}.`, 'warning');
           }
         } else {
-          updateCloudStatusUI('connected', `Sinkron terakhir: Pukul ${timeStr} WIB (${state.customers.length} KK, ${state.logs.length} Riwayat).`);
+          updateCloudStatusUI('connected', `Sinkron ${syncedViaMode}: Pukul ${timeStr} WIB (${state.customers.length} KK, ${state.logs.length} Riwayat).`);
           if (!silent) {
-            showToast(`Sinkronisasi berhasil! Cloud aktif (${state.customers.length} KK, ${state.logs.length} Riwayat).`, 'success');
+            showToast(`Sinkronisasi ${syncedViaMode} berhasil! Cloud aktif (${state.customers.length} KK, ${state.logs.length} Riwayat).`, 'success');
           }
         }
       } catch (err) {
@@ -12391,29 +13406,63 @@ const INDONESIA_REGIONS = {
         throw new Error('Supabase URL atau Key belum dikonfigurasi.');
       }
 
+      return callRpcWithDeadlockRetry(async () => {
+        const headers = await getSupabaseHeaders(key, true);
+        const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_quota_dispense`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }, 15000);
+
+        if (!res.ok) {
+          let errData = {};
+          try {
+            errData = await res.json();
+          } catch (e) {
+            errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+          }
+          const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
+          const err = new Error(userMsg);
+          err.code = errData.code;
+          err.details = errData.details;
+          err.status = res.status;
+          throw err;
+        }
+
+        return await res.json();
+      });
+    }
+
+    async function callVerifyCustomerRegistrationRPC(requestId, noKK) {
+      const payload = { p_request_id: requestId, p_no_kk: noKK };
+      assertRpcPayloadContract('verify_customer_registration_v4', payload);
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        throw new Error('Supabase URL atau Key belum dikonfigurasi.');
+      }
+
       const headers = await getSupabaseHeaders(key, true);
-      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_quota_dispense`, {
+      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/verify_customer_registration_v4`, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
-      }, 15000);
+      }, 5000);
 
       if (!res.ok) {
         let errData = {};
-        try {
-          errData = await res.json();
-        } catch (e) {
-          errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
-        }
-        const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
-        const err = new Error(userMsg);
+        try { errData = await res.json(); } catch (e) { errData = { code: String(res.status), message: res.statusText }; }
+        const err = new Error(mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message));
         err.code = errData.code;
-        err.details = errData.details;
         err.status = res.status;
         throw err;
       }
 
       return await res.json();
+    }
+
+    async function callReportOfflineReconciliationConflictRPC(payload) {
+      assertRpcPayloadContract('report_offline_reconciliation_conflict', payload);
+      return invokeExpandSyncRpc('report_offline_reconciliation_conflict', payload, 8000);
     }
 
     async function callRegisterCustomerRPC(payload) {
@@ -12423,60 +13472,75 @@ const INDONESIA_REGIONS = {
         throw new Error('Supabase URL atau Key belum dikonfigurasi.');
       }
 
-      const headers = await getSupabaseHeaders(key, true);
       let res;
       try {
-        res = await fetchWithTimeout(`${url}/rest/v1/rpc/register_customer`, {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        }, 15000);
+        res = await callRpcWithDeadlockRetry(async () => {
+          const headers = await getSupabaseHeaders(key, true);
+          return await fetchWithTimeout(`${url}/rest/v1/rpc/register_customer`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          }, 15000);
+        });
       } catch (fetchErr) {
         const isTimeout = fetchErr.code === 'ETIMEDOUT' ||
           fetchErr.status === 408 ||
           fetchErr.name === 'TimeoutError' ||
           (fetchErr.message && fetchErr.message.includes('timeout'));
 
-        if (isTimeout && payload && payload.p_no_kk) {
+        if (isTimeout && payload && payload.p_no_kk && payload.p_request_id) {
           try {
             await new Promise((resolve) => setTimeout(resolve, 500));
-            const verifyHeaders = await getSupabaseHeaders(key, false);
-            const verifyRes = await fetchWithTimeout(
-              `${url}/rest/v1/customers?no_kk=eq.${encodeURIComponent(payload.p_no_kk)}&select=*`,
-              { headers: verifyHeaders },
-              5000
-            );
-            if (verifyRes.ok) {
-              const existingCloudCusts = await verifyRes.json();
-              if (Array.isArray(existingCloudCusts) && existingCloudCusts.length > 0) {
-                const cloudCust = existingCloudCusts[0];
-                const pMember = String(payload.p_member_id || '').trim().toUpperCase();
-                const cMember = String(cloudCust.member_id || '').trim().toUpperCase();
-                const pNama = String(payload.p_nama || '').trim().toUpperCase();
-                const cNama = String(cloudCust.nama || '').trim().toUpperCase();
-                const isSameIdentity = (
-                  (pMember && cMember && pMember === cMember) ||
-                  (pNama && cNama && pNama === cNama)
-                );
+            const vRes = await callVerifyCustomerRegistrationRPC(payload.p_request_id, payload.p_no_kk);
 
-                if (isSameIdentity) {
-                  console.info('callRegisterCustomerRPC: False-timeout terdeteksi. Pelanggan terverifikasi cocok di cloud:', cloudCust.no_kk);
-                  return {
-                    status: 'SUCCESS',
-                    is_idempotent_replay: true,
-                    message: 'Data pelanggan berhasil diverifikasi di basis data cloud (rekonsiliasi timeout)',
-                    customer: cloudCust,
-                  };
-                }
+            if (vRes && vRes.status === 'COMMITTED_MATCH') {
+              console.info('callRegisterCustomerRPC: False-timeout terdeteksi. Pelanggan terverifikasi cocok di cloud:', vRes.customer?.no_kk || payload.p_no_kk);
+              return {
+                status: 'SUCCESS',
+                is_idempotent_replay: true,
+                message: 'Data pelanggan berhasil diverifikasi di basis data cloud (rekonsiliasi timeout)',
+                customer: vRes.customer,
+              };
+            }
 
-                const conflictErr = new Error(
-                  `Konflik pendaftaran: No. KK ${payload.p_no_kk} sudah terdaftar di cloud atas nama "${cloudCust.nama || 'LAIN'}".`
-                );
-                conflictErr.code = '23505';
-                conflictErr.status = 409;
-                conflictErr.isIdentityConflict = true;
-                throw conflictErr;
+            if (vRes && vRes.status === 'IDEMPOTENCY_CONFLICT') {
+              const conflictErr = new Error(
+                vRes.message || `Konflik Idempotensi (P0009): request_id ${payload.p_request_id} sudah terdaftar untuk No. KK berbeda.`
+              );
+              conflictErr.code = 'P0009';
+              conflictErr.status = 409;
+              conflictErr.isIdentityConflict = true;
+              throw conflictErr;
+            }
+
+            if (vRes && vRes.status === 'EXISTS_IDENTITY_CHECK' && vRes.customer) {
+              const cloudCust = vRes.customer;
+              const pMember = String(payload.p_member_id || '').trim().toUpperCase();
+              const cMember = String(cloudCust.member_id || '').trim().toUpperCase();
+              const pNama = String(payload.p_nama || '').trim().toUpperCase();
+              const cNama = String(cloudCust.nama || '').trim().toUpperCase();
+              const isSameIdentity = (
+                (pMember && cMember && pMember === cMember) ||
+                (pNama && cNama && pNama === cNama)
+              );
+
+              if (isSameIdentity) {
+                console.info('callRegisterCustomerRPC: Pelanggan terverifikasi cocok (identity check) pasca-timeout:', cloudCust.no_kk);
+                return {
+                  status: 'SUCCESS',
+                  is_idempotent_replay: true,
+                  message: 'Data pelanggan terverifikasi cocok di basis data cloud',
+                  customer: cloudCust,
+                };
               }
+
+              const conflictErr = new Error(
+                `Konflik pendaftaran: No. KK ${payload.p_no_kk} sudah terdaftar di cloud atas nama "${cloudCust.nama || 'LAIN'}".`
+              );
+              conflictErr.code = '23505';
+              conflictErr.status = 409;
+              conflictErr.isIdentityConflict = true;
+              throw conflictErr;
             }
           } catch (verifyErr) {
             if (verifyErr && verifyErr.isIdentityConflict) {
@@ -12513,29 +13577,31 @@ const INDONESIA_REGIONS = {
         throw new Error('Supabase URL atau Key belum dikonfigurasi.');
       }
 
-      const headers = await getSupabaseHeaders(key, true);
-      const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_warehouse_mutation`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      }, 15000);
+      return callRpcWithDeadlockRetry(async () => {
+        const headers = await getSupabaseHeaders(key, true);
+        const res = await fetchWithTimeout(`${url}/rest/v1/rpc/process_warehouse_mutation`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }, 15000);
 
-      if (!res.ok) {
-        let errData = {};
-        try {
-          errData = await res.json();
-        } catch (e) {
-          errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+        if (!res.ok) {
+          let errData = {};
+          try {
+            errData = await res.json();
+          } catch (e) {
+            errData = { code: String(res.status), message: res.statusText || `HTTP ${res.status}` };
+          }
+          const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
+          const err = new Error(userMsg);
+          err.code = errData.code;
+          err.details = errData.details;
+          err.status = res.status;
+          throw err;
         }
-        const userMsg = mapRpcResponseToUserMessage(errData.code || String(res.status), errData.message);
-        const err = new Error(userMsg);
-        err.code = errData.code;
-        err.details = errData.details;
-        err.status = res.status;
-        throw err;
-      }
 
-      return await res.json();
+        return await res.json();
+      });
     }
 
     async function pushSingleLogToSupabase(logEntry) {
@@ -12781,6 +13847,10 @@ const INDONESIA_REGIONS = {
       logoutSupabase,
       generateRequestId,
       OutboxManager,
+      CatatKuotaIDB,
+      ConflictReviewManager,
+      getTombstones,
+      STORAGE_KEYS,
     });
 
     
@@ -13029,14 +14099,20 @@ const INDONESIA_REGIONS = {
         try { renderHeaderAuthBadge(); } catch (e) {}
       }
 
-      // 6. Cek deep link & sinkronisasi background cloud
+      // 6. Migrasi / pemulihan IndexedDB atomik lalu cek deep link & sinkronisasi cloud Expand
       try {
         checkUrlDeepLink();
-        syncWithSupabase(true).then(() => {
-          checkUrlDeepLink();
-        }).catch((err) => {
-          console.warn('Sync background startup gagal (ditangani aman):', err);
-        });
+        CatatKuotaIDB.initAndMigrateFromLocalStorage()
+          .then(() => {
+            refreshAllUI();
+            return syncWithSupabase(true);
+          })
+          .then(() => {
+            checkUrlDeepLink();
+          })
+          .catch((err) => {
+            console.warn('Init IDB / sync background startup gagal (ditangani aman):', err);
+          });
 
         setInterval(() => {
           syncWithSupabase(true);
