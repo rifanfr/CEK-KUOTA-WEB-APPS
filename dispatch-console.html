@@ -10167,6 +10167,31 @@ const INDONESIA_REGIONS = {
       }
 
       // Render Tabel & Kartu Mobile Mutasi Gudang
+      const filterType = document.getElementById('wh-filter-type')?.value || 'all';
+      const filterItem = document.getElementById('wh-filter-item')?.value || 'all';
+
+      const filteredWh = sortWarehouseLogsNewestFirst(
+        (state.warehouseLogs || []).filter((m) => {
+          if (!m || m.is_void || Number(m.qty) <= 0) return false;
+          const mType = String(m.type || '').toUpperCase().trim();
+          const mItem = String(m.item || '').toLowerCase().trim();
+          if (filterType !== 'all') {
+            if (filterType === 'GI-PELANGGAN') {
+              if (mType !== 'GI-PELANGGAN' && mType !== 'GI-WARGA') return false;
+            } else if (mType !== filterType) {
+              return false;
+            }
+          }
+          if (filterItem !== 'all' && mItem !== filterItem) return false;
+          return true;
+        })
+      );
+
+      const tbody = document.getElementById('warehouse-logs-tbody');
+      const mobileCardsEl = document.getElementById('warehouse-mobile-cards-wrapper');
+
+      if (filteredWh.length === 0) {
+        const emptyHTML = `<div class="py-8 text-center text-xs text-slate-400">Belum ada transaksi gudang sesuai filter.</div>`;
         if (tbody) tbody.innerHTML = `<tr><td colspan="6">${emptyHTML}</td></tr>`;
         if (mobileCardsEl) mobileCardsEl.innerHTML = emptyHTML;
         safeCreateIcons();
