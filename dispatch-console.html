@@ -1249,8 +1249,8 @@
             <i data-lucide="shield-alert" class="w-6 h-6"></i>
           </div>
           <div>
-            <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Otorisasi Supervisor</h3>
-            <p class="text-xs text-slate-500 mt-1">Masukkan 4 digit PIN Supervisor untuk mengelola stok</p>
+            <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Otorisasi Admin</h3>
+            <p class="text-xs text-slate-500 mt-1">Masukkan 4 digit PIN Admin untuk mengelola stok</p>
           </div>
           <div class="space-y-2">
             <input
@@ -1685,7 +1685,7 @@
           <div>
             <h3 class="text-sm sm:text-base font-bold text-slate-900">Manajemen Data Penyimpanan</h3>
             <p id="settings-mgmt-desc" class="text-xs text-rose-600 font-medium mt-0.5">
-              Zona Berbahaya: Kosongkan seluruh data untuk memulai operasional dari awal. Membutuhkan verifikasi PIN Admin Supervisor.
+              Zona Berbahaya: Kosongkan seluruh data untuk memulai operasional dari awal. Membutuhkan verifikasi PIN Admin.
             </p>
           </div>
 
@@ -6864,7 +6864,7 @@ const INDONESIA_REGIONS = {
         openLoginModal();
         return;
       }
-      if (!authSession.role || !['cashier', 'supervisor', 'admin'].includes(authSession.role)) {
+      if (!authSession.role || !['cashier', 'admin'].includes(authSession.role)) {
         showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang penyaluran kuota. Hubungi administrator.`, 'error');
         return;
       }
@@ -7769,7 +7769,7 @@ const INDONESIA_REGIONS = {
         openLoginModal();
         return;
       }
-      if (!authSession.role || !['cashier', 'supervisor', 'admin'].includes(authSession.role)) {
+      if (!authSession.role || !['cashier', 'admin'].includes(authSession.role)) {
         showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang registrasi pelanggan. Hubungi administrator.`, 'error');
         return;
       }
@@ -7894,7 +7894,7 @@ const INDONESIA_REGIONS = {
       document.getElementById('modal-edit-log')?.classList.add('hidden');
       document.getElementById('modal-add-customer')?.classList.add('hidden');
       document.getElementById('modal-edit-customer')?.classList.add('hidden');
-      showToast(reason || 'Sesi Supervisor dikunci. Fitur gudang terkunci kembali.', 'info');
+      showToast(reason || 'Sesi Admin dikunci. Fitur gudang terkunci kembali.', 'info');
       safeCreateIcons();
     }
 
@@ -7907,7 +7907,7 @@ const INDONESIA_REGIONS = {
 
       adminInactivityTimer = setTimeout(() => {
         if (state.isAdminUnlocked) {
-          lockAdminSession('Sesi Supervisor telah berakhir karena tidak ada aktivitas (10 menit). Fitur dikunci kembali.');
+          lockAdminSession('Sesi Admin telah berakhir karena tidak ada aktivitas (10 menit). Fitur dikunci kembali.');
         }
       }, ADMIN_LOCKOUT_MS);
     }
@@ -7985,13 +7985,13 @@ const INDONESIA_REGIONS = {
         return;
       }
       const promptMsg = typeof titleOrCallback === 'string'
-        ? `Otorisasi Diperlukan: ${titleOrCallback}\nMasukkan PIN Supervisor / Admin:`
-        : 'Otorisasi Diperlukan. Masukkan PIN Supervisor:';
+        ? `Otorisasi Diperlukan: ${titleOrCallback}\nMasukkan PIN Admin:`
+        : 'Otorisasi Diperlukan. Masukkan PIN Admin:';
       const pin = prompt(promptMsg);
       if (!pin) return;
       const configuredPin = String(state.settings?.adminPin || '').trim();
       if (!configuredPin) {
-        showToast('PIN Supervisor belum diatur. Buka Pengaturan terlebih dahulu.', 'error');
+        showToast('PIN Admin belum diatur. Buka Pengaturan terlebih dahulu.', 'error');
         return;
       }
       if (pin === configuredPin) {
@@ -7999,7 +7999,7 @@ const INDONESIA_REGIONS = {
         resetAdminInactivityTimer();
         cb();
       } else {
-        showToast('PIN Supervisor salah. Aksi dibatalkan.', 'error');
+        showToast('PIN Admin salah. Aksi dibatalkan.', 'error');
       }
     }
 
@@ -8308,7 +8308,7 @@ const INDONESIA_REGIONS = {
         if (!target) return;
 
         openConfirmModal(
-          'Batalkan Catatan Pengambilan (Supervisor)?',
+          'Batalkan Catatan Pengambilan (Admin)?',
           `Catatan pengambilan atas nama ${target.nama} (${target.qty_beras} Beras, ${target.qty_gas} Gas) pada ${formatShortDateID(target.date)} akan dibatalkan di penyimpanan lokal browser. Catatan Cloud tetap dipreservasi demi integritas audit trail.`,
           () => {
             state.logs = state.logs.filter((l) => l.id !== logId);
@@ -9881,7 +9881,7 @@ const INDONESIA_REGIONS = {
             </div>
             <div>
               <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Otorisasi Gudang Diperlukan</h3>
-              <p class="text-xs text-slate-500 mt-1">Pengelolaan stok memerlukan akun dengan peran Supervisor, Warehouse Admin, atau Admin.</p>
+              <p class="text-xs text-slate-500 mt-1">Pengelolaan stok memerlukan akun dengan peran Warehouse Admin atau Admin.</p>
             </div>
             <div>
               <button
@@ -9894,7 +9894,7 @@ const INDONESIA_REGIONS = {
               </button>
             </div>
           `;
-        } else if (["supervisor", "warehouse_admin", "admin"].includes(String(session.role || "").toLowerCase())) {
+        } else if (["warehouse_admin", "admin"].includes(String(session.role || "").toLowerCase())) {
           gateEl.innerHTML = `
             <div class="w-12 h-12 mx-auto rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-700 flex items-center justify-center shadow-2xs">
               <i data-lucide="lock" class="w-6 h-6"></i>
@@ -9917,7 +9917,7 @@ const INDONESIA_REGIONS = {
             </div>
             <div>
               <h3 class="text-sm font-extrabold text-slate-900 tracking-tight">Akses Gudang Dibatasi</h3>
-              <p class="text-xs text-slate-500 mt-1">Peran akun Anda (${escapeHtml(session.role || 'tanpa role')}) tidak memiliki wewenang mengelola stok. Diperlukan peran Supervisor atau Warehouse Admin.</p>
+              <p class="text-xs text-slate-500 mt-1">Peran akun Anda (${escapeHtml(session.role || 'tanpa role')}) tidak memiliki wewenang mengelola stok. Diperlukan peran Admin atau Warehouse Admin.</p>
             </div>
           `;
         }
@@ -10209,11 +10209,11 @@ const INDONESIA_REGIONS = {
       e.preventDefault();
       const authSession = getAuthSession();
       if (!authSession) {
-        showToast('Pencatatan mutasi gudang memerlukan login akun petugas/supervisor.', 'error');
+        showToast('Pencatatan mutasi gudang memerlukan login akun petugas/admin.', 'error');
         openLoginModal();
         return;
       }
-      if (!authSession.role || !['supervisor', 'warehouse_admin', 'admin'].includes(authSession.role)) {
+      if (!authSession.role || !['warehouse_admin', 'admin'].includes(authSession.role)) {
         showToast(`Akses Ditolak: Peran '${authSession.role || 'tanpa role'}' tidak memiliki wewenang mutasi gudang. Hubungi administrator.`, 'error');
         return;
       }
@@ -12053,7 +12053,7 @@ const INDONESIA_REGIONS = {
       }
     }
     const SUPABASE_AUTH_STORAGE_KEY = 'catat_kuota_supabase_auth_session_v1';
-    const VALID_OPERATIONAL_ROLES = ['cashier', 'supervisor', 'warehouse_admin', 'admin'];
+    const VALID_OPERATIONAL_ROLES = ['cashier', 'warehouse_admin', 'admin'];
 
     function parseJwtPayload(token) {
       if (!token || typeof token !== 'string') return null;
@@ -12388,10 +12388,10 @@ const INDONESIA_REGIONS = {
       state.currentUserRole = normRole;
 
       // cashier: transaksi kuota dan registrasi customer
-      // supervisor/admin: transaksi kuota, registrasi, dan gudang
+      // admin: transaksi kuota, registrasi, dan gudang
       // warehouse_admin: gudang saja
       // null / invalid: seluruh fitur mutasi terkunci (read-only)
-      const canAccessWarehouse = normRole ? ['supervisor', 'warehouse_admin', 'admin'].includes(normRole) : false;
+      const canAccessWarehouse = normRole ? ['warehouse_admin', 'admin'].includes(normRole) : false;
       state.isAdminUnlocked = canAccessWarehouse;
 
       renderHeaderAuthBadge();
@@ -12504,7 +12504,6 @@ const INDONESIA_REGIONS = {
       if (session && session.access_token) {
         const roleColors = {
           cashier: 'bg-emerald-50 text-emerald-800 border-emerald-200',
-          supervisor: 'bg-indigo-50 text-indigo-800 border-indigo-200',
           warehouse_admin: 'bg-amber-50 text-amber-800 border-amber-200',
           admin: 'bg-purple-50 text-purple-800 border-purple-200',
         };
@@ -12711,7 +12710,7 @@ const INDONESIA_REGIONS = {
       // Jangan pernah memasukkan data legacy/demo yang menunggu review manual
       const session = getAuthSession();
       const currentRole = session ? session.role : null;
-      if (currentRole && ['supervisor', 'warehouse_admin', 'admin'].includes(currentRole)) {
+      if (currentRole && ['warehouse_admin', 'admin'].includes(currentRole)) {
         (state.warehouseLogs || [])
           .filter((w) => w.is_dirty && w.sync_status !== 'LEGACY_LOCAL_REVIEW_REQUIRED' && w.type !== 'GI-WARGA' && w.type !== 'GI-PELANGGAN')
           .forEach((w) => {
@@ -12784,9 +12783,9 @@ const INDONESIA_REGIONS = {
         }
 
         // Cek izin peran khusus mutasi gudang agar akun cashier tidak terbentur 403 berulang
-        if (entry.type === 'process_warehouse_mutation' && (!currentRole || !['supervisor', 'warehouse_admin', 'admin'].includes(currentRole))) {
+        if (entry.type === 'process_warehouse_mutation' && (!currentRole || !['warehouse_admin', 'admin'].includes(currentRole))) {
           failCount++;
-          errors.push({ id: entry.requestId, type: entry.type, message: 'Menunggu otorisasi admin gudang/supervisor' });
+          errors.push({ id: entry.requestId, type: entry.type, message: 'Menunggu otorisasi admin gudang/admin' });
           continue;
         }
 
@@ -13002,7 +13001,7 @@ const INDONESIA_REGIONS = {
     function getSnapshotSectionsForRole(role) {
       if (role === 'cashier') return ['customers', 'logs'];
       if (role === 'warehouse_admin') return ['warehouse_logs', 'stock_summary'];
-      if (role === 'supervisor' || role === 'admin') return ['customers', 'logs', 'warehouse_logs', 'stock_summary'];
+      if (role === 'admin') return ['customers', 'logs', 'warehouse_logs', 'stock_summary'];
       return [];
     }
 
@@ -13152,7 +13151,7 @@ const INDONESIA_REGIONS = {
                 }
               }
 
-              const hasStockPerm = ['warehouse_admin', 'supervisor', 'admin'].includes(session.role);
+              const hasStockPerm = ['warehouse_admin', 'admin'].includes(session.role);
               return {
                 customers: Array.from(custMap.values()),
                 logs: Array.from(logMap.values()),
