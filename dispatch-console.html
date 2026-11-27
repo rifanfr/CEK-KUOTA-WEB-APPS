@@ -1734,7 +1734,7 @@
   <!-- ===================================================================== -->
   <div
     id="modal-auth-login"
-    class="fixed inset-0 z-50 hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
+    class="fixed inset-0 z-[9999] hidden bg-slate-900/60 backdrop-blur-xs overflow-y-auto p-4 flex items-center justify-center"
     role="dialog"
     aria-modal="true"
     aria-labelledby="modal-auth-login-title"
@@ -1747,11 +1747,12 @@
           </div>
           <div>
             <h3 id="modal-auth-login-title" class="text-sm font-extrabold text-slate-900 tracking-tight">Login Petugas</h3>
-            <p class="text-xs text-slate-500">Supabase Auth Session</p>
+            <p id="auth-login-subtitle" class="text-xs text-slate-500">Supabase Auth Session</p>
           </div>
         </div>
         <button
           type="button"
+          id="auth-login-close-btn"
           onclick="closeLoginModal()"
           class="text-slate-400 hover:text-slate-600 p-1.5 rounded-xl transition cursor-pointer"
           title="Tutup Modal"
@@ -1792,7 +1793,7 @@
           </label>
         </div>
 
-        <div id="auth-login-error" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
+        <div id="auth-login-error" role="alert" aria-live="polite" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
 
         <button
           type="submit"
@@ -1802,6 +1803,18 @@
           <i data-lucide="log-in" class="w-4 h-4"></i>
           <span>Masuk ke Sistem</span>
         </button>
+
+        <div class="pt-2.5 border-t border-slate-100 text-center">
+          <button
+            type="button"
+            id="auth-offline-fallback-btn"
+            onclick="enterOfflineLocalMode()"
+            class="inline-flex items-center justify-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-800 underline underline-offset-2 py-1 px-2 rounded-lg transition cursor-pointer"
+          >
+            <i data-lucide="wifi-off" class="w-3.5 h-3.5"></i>
+            <span>Masuk Mode Lokal (Offline)</span>
+          </button>
+        </div>
       </form>
     </div>
   </div>
@@ -3106,7 +3119,7 @@
   <!-- ===================================================================== -->
   <!-- TOAST NOTIFICATIONS                                                   -->
   <!-- ===================================================================== -->
-  <div id="toast-container" class="fixed bottom-16 sm:bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+  <div id="toast-container" class="fixed bottom-16 sm:bottom-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
 
   <!-- ===================================================================== -->
   <!-- LOGIKA APLIKASI JAVASCRIPT                                            -->
@@ -10380,20 +10393,6 @@ const INDONESIA_REGIONS = {
       }
 
       // 6. Cek jika token berada di revoked_ids
-      found = state.customers.find((c) => Array.isArray(c.revoked_ids) && c.revoked_ids.some(r => String(r).toUpperCase() === clean));
-      if (found) return found;
-
-      return null;
-    }
-
-    function switchCardPreviewSide(side) {
-      state.currentCardPreviewSide = side || 'front';
-      const colFront = document.getElementById('preview-col-front');
-      const colBack = document.getElementById('preview-col-back');
-      const btnFront = document.getElementById('tab-card-front-btn');
-      const btnBack = document.getElementById('tab-card-back-btn');
-      const btnBoth = document.getElementById('tab-card-both-btn');
-      const gridContainer = document.getElementById('card-grid-container');
       const modalDialog = document.getElementById('modal-card-dialog');
 
       if (!colFront || !colBack) return;
@@ -10850,6 +10849,7 @@ const INDONESIA_REGIONS = {
 
       const loginGate = document.getElementById('login-gate-screen');
       if (loginGate) loginGate.classList.add('hidden');
+      if (typeof closeLoginModal === 'function') closeLoginModal(true);
 
       const scanResultModal = document.getElementById('modal-scan-result');
       if (scanResultModal) scanResultModal.classList.add('hidden');
@@ -11995,6 +11995,69 @@ const INDONESIA_REGIONS = {
     }
     const SUPABASE_AUTH_STORAGE_KEY = 'catat_kuota_supabase_auth_session_v1';
     const VALID_OPERATIONAL_ROLES = ['cashier', 'supervisor', 'warehouse_admin', 'admin'];
+    let isLocalModeFallback = false;
+    let isLoginGateActive = false;
+
+    function hasValidSupabaseConfig() {
+      const cfg = (typeof window !== 'undefined' && window.__APP_CONFIG__) ? window.__APP_CONFIG__ : null;
+      const url = String((cfg && cfg.supabaseUrl) || DEFAULT_SUPABASE_URL || '').trim();
+      const key = String((cfg && cfg.supabaseAnonKey) || DEFAULT_SUPABASE_KEY || '').trim();
+      return Boolean(url && key && /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url));
+    }
+
+    function setDashboardLockState(locked) {
+      const shell = document.getElementById('app-shell');
+      if (shell) {
+        shell.inert = Boolean(locked);
+        if (locked) {
+          shell.setAttribute('aria-hidden', 'true');
+          shell.classList.add('pointer-events-none', 'select-none');
+        } else {
+          shell.removeAttribute('aria-hidden');
+          shell.classList.remove('pointer-events-none', 'select-none');
+        }
+      }
+      if (typeof document !== 'undefined' && document.body && document.body.classList) {
+        document.body.classList.toggle('overflow-hidden', Boolean(locked));
+      }
+    }
+
+    function formatAuthErrorMessage(err) {
+      const rawMsg = String((err && err.message) || '').trim();
+      if (/invalid login credentials|invalid_credentials/i.test(rawMsg)) {
+        return 'Email atau kata sandi salah. Periksa kembali lalu coba lagi.';
+      }
+      if (/email not confirmed|email_not_confirmed/i.test(rawMsg)) {
+        return 'Email akun belum dikonfirmasi. Hubungi administrator.';
+      }
+      if ((err && err.name === 'TimeoutError') || /failed to fetch|networkerror|load failed|network request failed|etimedout/i.test(rawMsg)) {
+        return 'Gagal terhubung ke server Supabase. Periksa koneksi internet Anda atau pilih "Masuk Mode Lokal (Offline)".';
+      }
+      return rawMsg || 'Gagal login ke Supabase Auth.';
+    }
+
+    function syncSupabaseLoginGate() {
+      if (typeof state !== 'undefined' && state.isPublicKioskMode) return false;
+      const session = getAuthSession();
+      if (hasValidSupabaseConfig() && (!session || !session.access_token) && !isLocalModeFallback) {
+        openLoginModal({ gateMode: true });
+        return true;
+      }
+      if (isLoginGateActive) {
+        closeLoginModal(true);
+      }
+      return false;
+    }
+
+    function enterOfflineLocalMode() {
+      isLocalModeFallback = true;
+      closeLoginModal(true);
+      if (typeof updateCloudStatusUI === 'function') {
+        updateCloudStatusUI('offline', 'Mode Lokal (Offline) aktif. Login petugas kapan saja untuk sinkronisasi cloud.');
+      }
+      if (typeof refreshAllUI === 'function') refreshAllUI();
+      showToast('Masuk ke Mode Lokal (Offline). Anda dapat login kapan saja melalui tombol Login Petugas.', 'info');
+    }
 
     function parseJwtPayload(token) {
       if (!token || typeof token !== 'string') return null;
@@ -12108,9 +12171,11 @@ const INDONESIA_REGIONS = {
       };
 
       saveAuthSession(session, session.remember);
+      isLocalModeFallback = false;
       state.operatorName = session.email;
       applyRoleBasedUIPrivileges(session.role);
       renderHeaderAuthBadge();
+      if (typeof closeLoginModal === 'function') closeLoginModal(true);
       refreshAllUI();
 
       if (!serverRole) {
@@ -12242,6 +12307,7 @@ const INDONESIA_REGIONS = {
 
     function logoutSupabase(showNotification = true) {
       clearAuthSession();
+      isLocalModeFallback = false;
       state.operatorName = '';
       state.isAdminUnlocked = false;
       applyRoleBasedUIPrivileges(null);
@@ -12250,6 +12316,7 @@ const INDONESIA_REGIONS = {
         showToast('Sesi petugas telah logout. Seluruh akses mutasi data dikunci.', 'info');
       }
       refreshAllUI();
+      syncSupabaseLoginGate();
     }
 
     function applyRoleBasedUIPrivileges(role) {
@@ -12269,23 +12336,56 @@ const INDONESIA_REGIONS = {
       renderHeaderAuthBadge();
     }
 
-    function openLoginModal() {
+    function openLoginModal(options = {}) {
       const modal = document.getElementById('modal-auth-login');
       if (!modal) return;
+      const gateMode = Boolean(options && options.gateMode);
+      isLoginGateActive = gateMode;
+
+      if (gateMode) {
+        modal.classList.remove('bg-slate-900/60', 'backdrop-blur-xs');
+        modal.classList.add('bg-slate-900', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950');
+      } else {
+        modal.classList.remove('bg-slate-900', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950');
+        modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
+      }
+
+      const closeBtn = document.getElementById('auth-login-close-btn');
+      if (closeBtn) closeBtn.classList.toggle('hidden', gateMode);
+
+      const subtitleEl = document.getElementById('auth-login-subtitle');
+      if (subtitleEl) {
+        subtitleEl.textContent = gateMode ? 'Masuk akun petugas untuk membuka dashboard' : 'Supabase Auth Session';
+      }
+
       const errBox = document.getElementById('auth-login-error');
       if (errBox) {
         errBox.textContent = '';
         errBox.classList.add('hidden');
       }
+      const passInp = document.getElementById('auth-password-input');
+      if (gateMode && passInp) passInp.value = '';
+
       modal.classList.remove('hidden');
+      setDashboardLockState(true);
       const emailInp = document.getElementById('auth-email-input');
       if (emailInp) setTimeout(() => emailInp.focus(), 150);
       safeCreateIcons();
     }
 
-    function closeLoginModal() {
+    function closeLoginModal(force = false) {
+      if (isLoginGateActive && force !== true) return;
+      isLoginGateActive = false;
+      setDashboardLockState(false);
+
       const modal = document.getElementById('modal-auth-login');
-      if (modal) modal.classList.add('hidden');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('bg-slate-900', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950');
+        modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
+      }
+      const closeBtn = document.getElementById('auth-login-close-btn');
+      if (closeBtn) closeBtn.classList.remove('hidden');
     }
 
     async function handleAuthLoginSubmit(e) {
@@ -12316,15 +12416,16 @@ const INDONESIA_REGIONS = {
 
       try {
         const session = await loginWithSupabase(email, password, remember);
-        closeLoginModal();
+        closeLoginModal(true);
         if (passInp) passInp.value = '';
       } catch (err) {
         console.warn('Login failure:', err);
+        const friendlyMsg = formatAuthErrorMessage(err);
         if (errBox) {
-          errBox.textContent = err.message || 'Gagal login ke Supabase Auth.';
+          errBox.textContent = friendlyMsg;
           errBox.classList.remove('hidden');
         }
-        showToast(err.message || 'Login gagal. Periksa kredensial Anda.', 'error');
+        showToast(friendlyMsg, 'error');
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
@@ -13843,6 +13944,9 @@ const INDONESIA_REGIONS = {
       openLoginModal,
       closeLoginModal,
       handleAuthLoginSubmit,
+      enterOfflineLocalMode,
+      syncSupabaseLoginGate,
+      hasValidSupabaseConfig,
       loginWithSupabase,
       logoutSupabase,
       generateRequestId,
@@ -14059,6 +14163,7 @@ const INDONESIA_REGIONS = {
         state.operatorName = session ? (session.email || '') : '';
         applyRoleBasedUIPrivileges(session ? session.role : null);
         renderHeaderAuthBadge();
+        syncSupabaseLoginGate();
       } catch (errAuth) {
         console.warn('Peringatan inisialisasi awal auth badge:', errAuth);
       }
