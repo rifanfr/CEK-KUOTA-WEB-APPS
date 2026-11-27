@@ -1011,7 +1011,7 @@
       <!-- TAB 2: DATA KK (COMPACT 5-COLUMN SINGLE ROW + MOBILE CARDS)        -->
       <!-- ================================================================= -->
       <section id="tab-view-customers" class="tab-view hidden space-y-4">
-        <div class="sticky top-[49px] sm:top-[56px] z-20 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200 shadow-sm p-3.5 sm:p-4 mb-3 transition-all">
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-3.5 sm:p-4 transition-all">
           <div class="flex items-center justify-between gap-2.5">
             <h2 class="text-base sm:text-lg font-bold text-slate-900 truncate">Data Kartu Keluarga</h2>
 
@@ -1272,12 +1272,16 @@
         <div id="warehouse-unlocked-content" class="hidden space-y-3.5">
           <div id="warehouse-header-card" class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div>
-              <h2 class="text-base sm:text-lg font-bold text-slate-900 tracking-tight">Stok Gudang</h2>
-              <p class="text-xs text-slate-500 mt-0.5">Saldo fisik real-time &amp; pencatatan mutasi penerimaan/pengeluaran</p>
+              <div class="flex items-center gap-2">
+                <h2 class="text-base sm:text-lg font-bold text-slate-900 tracking-tight">Stok Gudang</h2>
+                <span id="warehouse-readonly-badge" class="hidden inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-sky-50 text-sky-700 border border-sky-200">View Only</span>
+              </div>
+              <p id="warehouse-header-subtitle" class="text-xs text-slate-500 mt-0.5">Saldo fisik real-time &amp; pencatatan mutasi penerimaan/pengeluaran</p>
             </div>
             <div class="flex items-center gap-2 shrink-0">
               <button
                 type="button"
+                id="btn-export-warehouse"
                 onclick="exportWarehouseCSV()"
                 class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition shadow-2xs whitespace-nowrap cursor-pointer"
               >
@@ -1306,8 +1310,17 @@
           <!-- 2 Kartu Saldo Fisik Gudang (Beras & Gas LPG 3 kg) -->
           <div id="warehouse-balance-cards" class="grid grid-cols-1 md:grid-cols-2 gap-3.5"></div>
 
+          <!-- Info Mode View-Only Khusus Role Cashier -->
+          <div id="warehouse-cashier-view-note" class="hidden rounded-2xl border border-sky-200 bg-sky-50/70 px-4 py-3 text-xs text-sky-900 flex items-start gap-2.5">
+            <i data-lucide="eye" class="w-4 h-4 text-sky-600 shrink-0 mt-0.5"></i>
+            <div>
+              <p class="font-bold">Mode Pantau Stok (View-Only)</p>
+              <p class="text-sky-800/90 mt-0.5">Anda dapat memantau sisa stok fisik Beras &amp; Gas secara real-time. Pencatatan mutasi gudang (GR / GI Manual) serta rincian surat jalan (DO) hanya tersedia untuk peran Warehouse Admin dan Admin.</p>
+            </div>
+          </div>
+
           <!-- Form Catat Transaksi Gudang (GR Barang Masuk / GI Manual Keluar) -->
-          <form onsubmit="handleWarehouseMutationSubmit(event)" class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 space-y-3.5">
+          <form id="warehouse-mutation-form" onsubmit="handleWarehouseMutationSubmit(event)" class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 space-y-3.5">
             <div id="warehouse-form-header" class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <h3 class="text-sm sm:text-base font-bold text-slate-900">Catat Mutasi Gudang</h3>
               <div class="inline-flex p-0.5 rounded-xl bg-slate-100 border border-slate-200 self-start sm:self-auto">
@@ -1409,7 +1422,7 @@
           </form>
 
           <!-- Tabel / Kartu Riwayat Mutasi Gudang (GR & GI) -->
-          <div class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 space-y-3">
+          <div id="warehouse-log-card" class="bg-white rounded-2xl border border-slate-200 shadow-2xs p-4 sm:p-5 space-y-3">
             <div id="warehouse-log-header" class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
               <h3 class="text-sm sm:text-base font-bold text-slate-900">Log Transaksi Gudang</h3>
               <div id="warehouse-log-filters" class="grid grid-cols-2 sm:flex gap-2">
@@ -3262,6 +3275,9 @@
   <!-- TOAST NOTIFICATIONS                                                   -->
   <!-- ===================================================================== -->
   <div id="toast-container" class="fixed bottom-16 sm:bottom-4 right-4 z-[10000] flex flex-col gap-2 max-w-sm w-full pointer-events-none px-4 sm:px-0"></div>
+
+  <!-- FLOATING PORTAL MENU AKSI TABEL (DIRECT BODY CHILD: ANTI-OFFSET & ANTI-CLIPPING) -->
+  <div id="floating-row-action-portal" role="menu" aria-orientation="vertical" class="hidden fixed z-[80] w-40 rounded-xl bg-white border border-slate-200/90 shadow-xl ring-1 ring-slate-900/5 py-1 text-xs animate-fade-in"></div>
 
   <!-- ===================================================================== -->
   <!-- LOGIKA APLIKASI JAVASCRIPT                                            -->
@@ -5612,7 +5628,9 @@ const INDONESIA_REGIONS = {
       const rawLogs = Array.isArray(state.warehouseLogs) ? state.warehouseLogs : [];
       const syncMeta = state._syncMeta || null;
       const isCashierOnly = state.currentUserRole === 'cashier';
-      const stockRestricted = isCashierOnly && rawLogs.length === 0 && (!syncMeta || syncMeta.server_stock_summary === null);
+      const hasServerSummary = Boolean(syncMeta && Array.isArray(syncMeta.server_stock_summary));
+      const useCashierServerSummary = isCashierOnly && hasServerSummary && (typeof isCloudModeActive === 'function' ? isCloudModeActive() : true);
+      const stockRestricted = isCashierOnly && rawLogs.length === 0 && !hasServerSummary;
 
       let berasInitial = 0;
       let berasGR = 0;
@@ -5623,6 +5641,7 @@ const INDONESIA_REGIONS = {
 
       rawLogs.forEach((m) => {
         if (!m || m.is_void || Number(m.qty) <= 0) return;
+        if (useCashierServerSummary && !m.is_dirty) return;
         const q = Number(m.qty) || 0;
         const mItem = String(m.item || '').toLowerCase().trim();
         const mType = String(m.type || '').toUpperCase().trim();
@@ -5640,11 +5659,13 @@ const INDONESIA_REGIONS = {
       let berasStock = berasInitial + berasGR - berasGI;
       let gasStock = gasInitial + gasGR - gasGI;
 
-      if (!stockRestricted && rawLogs.length === 0 && syncMeta && Array.isArray(syncMeta.server_stock_summary)) {
+      if (!stockRestricted && (useCashierServerSummary || (rawLogs.length === 0 && hasServerSummary))) {
         const bRow = syncMeta.server_stock_summary.find((s) => s.item === 'beras');
         const gRow = syncMeta.server_stock_summary.find((s) => s.item === 'gas');
-        if (bRow) berasStock = Number(bRow.available) || 0;
-        if (gRow) gasStock = Number(gRow.available) || 0;
+        const serverBeras = bRow ? (Number(bRow.available) || 0) : 0;
+        const serverGas = gRow ? (Number(gRow.available) || 0) : 0;
+        berasStock = useCashierServerSummary ? (serverBeras + berasInitial + berasGR - berasGI) : serverBeras;
+        gasStock = useCashierServerSummary ? (serverGas + gasInitial + gasGR - gasGI) : serverGas;
       }
 
       const threshold = Number(state.settings.lowStockThreshold) || 20;
@@ -5675,6 +5696,7 @@ const INDONESIA_REGIONS = {
       const desktopDot = document.getElementById('nav-warehouse-alert-dot');
       const mobileDot = document.getElementById('mob-warehouse-alert-dot');
       const pinBadge = document.getElementById('nav-warehouse-pin-badge');
+      const isViewOnlyCashier = (typeof canViewWarehouseStockReadOnly === 'function') && canViewWarehouseStockReadOnly() && !state.isAdminUnlocked;
 
       if (desktopDot) desktopDot.classList.toggle('hidden', summary.stockRestricted || !summary.anyLow);
       if (mobileDot) mobileDot.classList.toggle('hidden', summary.stockRestricted || !summary.anyLow);
@@ -5682,6 +5704,9 @@ const INDONESIA_REGIONS = {
         if (state.isAdminUnlocked) {
           pinBadge.classList.add('hidden');
           pinBadge.textContent = '';
+        } else if (isViewOnlyCashier) {
+          pinBadge.textContent = 'VIEW';
+          pinBadge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-md text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200';
         } else {
           pinBadge.textContent = 'PIN';
           pinBadge.className = 'inline-flex items-center px-1.5 py-0.2 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600';
@@ -6115,6 +6140,7 @@ const INDONESIA_REGIONS = {
     // 9. NAVIGASI TAB
     // =========================================================================
     function switchTab(tabName) {
+      if (typeof closeAllRowActionMenus === 'function') closeAllRowActionMenus();
       if (tabName === 'settings' && typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab()) {
         const fallbackTab = (typeof getEffectiveOperationalRole === 'function' && getEffectiveOperationalRole() === 'warehouse_admin')
           ? 'warehouse'
@@ -7265,32 +7291,45 @@ const INDONESIA_REGIONS = {
               };
               state.logs.unshift(finalLogEntry);
 
-              // Sinkronisasi mutasi stok GI-WARGA ke state lokal (is_dirty: false, dibuat otomatis oleh RPC)
-              if (qBeras > 0) {
-                state.warehouseLogs.unshift({
-                  id: `WH-GI-${finalLogId}-BERAS`,
-                  date: txDateStr,
-                  type: 'GI-WARGA',
-                  item: 'beras',
-                  qty: qBeras,
-                  ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
-                  logId: finalLogId,
-                  is_dirty: false,
-                  local_updated_at: nowISO,
-                });
-              }
-              if (qGas > 0) {
-                state.warehouseLogs.unshift({
-                  id: `WH-GI-${finalLogId}-GAS`,
-                  date: txDateStr,
-                  type: 'GI-WARGA',
-                  item: 'gas',
-                  qty: qGas,
-                  ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
-                  logId: finalLogId,
-                  is_dirty: false,
-                  local_updated_at: nowISO,
-                });
+              // Sinkronisasi saldo/mutasi stok pasca-dispense cloud
+              if (state.currentUserRole === 'cashier') {
+                if (!rpcResult.is_idempotent_replay && state._syncMeta && Array.isArray(state._syncMeta.server_stock_summary)) {
+                  const adjustStock = (itemName, delta) => {
+                    if (!delta) return;
+                    const row = state._syncMeta.server_stock_summary.find((s) => s && s.item === itemName);
+                    if (row) row.available = (Number(row.available) || 0) - delta;
+                  };
+                  adjustStock('beras', qBeras);
+                  adjustStock('gas', qGas);
+                }
+              } else {
+                // Mutasi stok GI-WARGA lokal untuk admin/warehouse_admin (is_dirty: false, dibuat otomatis oleh RPC)
+                if (qBeras > 0) {
+                  state.warehouseLogs.unshift({
+                    id: `WH-GI-${finalLogId}-BERAS`,
+                    date: txDateStr,
+                    type: 'GI-WARGA',
+                    item: 'beras',
+                    qty: qBeras,
+                    ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
+                    logId: finalLogId,
+                    is_dirty: false,
+                    local_updated_at: nowISO,
+                  });
+                }
+                if (qGas > 0) {
+                  state.warehouseLogs.unshift({
+                    id: `WH-GI-${finalLogId}-GAS`,
+                    date: txDateStr,
+                    type: 'GI-WARGA',
+                    item: 'gas',
+                    qty: qGas,
+                    ref: `${customer.nama} (${formatKKMasked(customer.no_kk)})`,
+                    logId: finalLogId,
+                    is_dirty: false,
+                    local_updated_at: nowISO,
+                  });
+                }
               }
 
               state.record.qtyBeras = 0;
@@ -7480,28 +7519,105 @@ const INDONESIA_REGIONS = {
       return dots;
     }
 
+    let _activeRowActionState = null;
+
+    function getFloatingRowActionPortal() {
+      let portal = document.getElementById('floating-row-action-portal');
+      if (!portal && typeof document.createElement === 'function') {
+        portal = document.createElement('div');
+        portal.id = 'floating-row-action-portal';
+        portal.className = 'hidden fixed z-[80] w-40 rounded-xl bg-white border border-slate-200/90 shadow-xl ring-1 ring-slate-900/5 py-1 text-xs animate-fade-in';
+      }
+      if (portal && portal.parentElement !== document.body && typeof document.body?.appendChild === 'function') {
+        document.body.appendChild(portal);
+      }
+      return portal;
+    }
+
+    function clearActiveRowActionTriggerVisuals() {
+      if (_activeRowActionState && _activeRowActionState.triggerEl) {
+        const btn = _activeRowActionState.triggerEl;
+        if (typeof btn.setAttribute === 'function') btn.setAttribute('aria-expanded', 'false');
+        if (btn.classList) btn.classList.remove('border-emerald-400', 'bg-slate-100', 'text-slate-900', 'ring-2', 'ring-emerald-500/20');
+      }
+      _activeRowActionState = null;
+    }
+
+    function closeAllRowActionMenus() {
+      clearActiveRowActionTriggerVisuals();
+      const portal = document.getElementById('floating-row-action-portal');
+      if (portal) {
+        portal.classList.add('hidden');
+        portal.style.visibility = '';
+      }
+      document.querySelectorAll('.cust-action-dropdown, .hist-action-dropdown').forEach((el) => el.classList.add('hidden'));
+    }
+
+    function openFloatingRowActionMenu(event, sourceMenuEl, widthClass = 'w-40') {
+      if (!sourceMenuEl || !event || !event.currentTarget) return;
+      event.stopPropagation();
+      const triggerEl = event.currentTarget;
+      const portal = getFloatingRowActionPortal();
+      if (!portal) return;
+
+      const isSameOpen = Boolean(
+        _activeRowActionState &&
+        _activeRowActionState.sourceId === sourceMenuEl.id &&
+        !portal.classList.contains('hidden')
+      );
+      closeAllRowActionMenus();
+      if (isSameOpen) return;
+
+      portal.className = `fixed z-[80] ${widthClass} rounded-xl bg-white border border-slate-200/90 shadow-xl ring-1 ring-slate-900/5 py-1 text-xs animate-fade-in`;
+      portal.innerHTML = sourceMenuEl.innerHTML;
+
+      // Ukur dimensi riil popover di luar containing block mana pun sebelum ditampilkan
+      portal.style.position = 'fixed';
+      portal.style.visibility = 'hidden';
+      portal.style.top = '0px';
+      portal.style.left = '0px';
+      portal.style.right = 'auto';
+      portal.style.bottom = 'auto';
+      portal.classList.remove('hidden');
+
+      const rect = typeof triggerEl.getBoundingClientRect === 'function'
+        ? triggerEl.getBoundingClientRect()
+        : { top: 0, bottom: 28, left: 0, right: 200 };
+      const portalRect = typeof portal.getBoundingClientRect === 'function' ? portal.getBoundingClientRect() : null;
+      const defaultWidth = widthClass === 'w-44' ? 176 : 160;
+      const menuWidth = portal.offsetWidth || (portalRect && portalRect.width) || defaultWidth;
+      const menuHeight = portal.offsetHeight || (portalRect && portalRect.height) || 128;
+
+      const vpWidth = (document.documentElement && document.documentElement.clientWidth) || window.innerWidth || 1280;
+      const vpHeight = (document.documentElement && document.documentElement.clientHeight) || window.innerHeight || 800;
+      const gap = 6;
+      const margin = 8;
+
+      const spaceBelow = vpHeight - rect.bottom;
+      const useAbove = spaceBelow < menuHeight + gap + margin && rect.top >= menuHeight + gap + margin;
+      let top = useAbove ? (rect.top - menuHeight - gap) : (rect.bottom + gap);
+      top = Math.max(margin, Math.min(top, Math.max(margin, vpHeight - menuHeight - margin)));
+
+      let left = rect.right - menuWidth;
+      left = Math.max(margin, Math.min(left, Math.max(margin, vpWidth - menuWidth - margin)));
+
+      portal.style.top = `${Math.round(top)}px`;
+      portal.style.left = `${Math.round(left)}px`;
+      portal.style.visibility = '';
+
+      if (typeof triggerEl.setAttribute === 'function') triggerEl.setAttribute('aria-expanded', 'true');
+      if (triggerEl.classList) triggerEl.classList.add('border-emerald-400', 'bg-slate-100', 'text-slate-900', 'ring-2', 'ring-emerald-500/20');
+      _activeRowActionState = { triggerEl, sourceId: sourceMenuEl.id };
+      safeCreateIcons();
+    }
+
     function closeAllCustomerActionMenus() {
-      document.querySelectorAll('.cust-action-dropdown').forEach((el) => el.classList.add('hidden'));
+      closeAllRowActionMenus();
     }
 
     function toggleCustomerActionMenu(event, noKK) {
-      event.stopPropagation();
       const menu = document.getElementById(`cust-action-menu-${noKK}`);
-      if (!menu) return;
-      const isCurrentlyOpen = !menu.classList.contains('hidden');
-      closeAllCustomerActionMenus();
-      if (!isCurrentlyOpen) {
-        const rect = event.currentTarget.getBoundingClientRect();
-        const menuHeight = menu.offsetHeight || 128;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const useAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight;
-        menu.style.top = useAbove ? 'auto' : `${rect.bottom + 4}px`;
-        menu.style.bottom = useAbove ? `${window.innerHeight - rect.top + 4}px` : 'auto';
-        menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
-        menu.style.left = 'auto';
-        menu.classList.remove('hidden');
-        safeCreateIcons();
-      }
+      openFloatingRowActionMenu(event, menu, 'w-40');
     }
 
     function handleCustomerSearchInput(inputEl) {
@@ -7528,14 +7644,27 @@ const INDONESIA_REGIONS = {
     }
 
     document.addEventListener('click', (e) => {
-      if (!e.target.closest('.dropdown-cust-menu')) {
-        closeAllCustomerActionMenus();
+      if (!e.target || typeof e.target.closest !== 'function') {
+        closeAllRowActionMenus();
+        return;
+      }
+      if (!e.target.closest('.dropdown-cust-menu, .dropdown-history-menu, #floating-row-action-portal')) {
+        closeAllRowActionMenus();
       }
     });
-    window.addEventListener('resize', closeAllCustomerActionMenus, { passive: true });
-    window.addEventListener('scroll', closeAllCustomerActionMenus, { passive: true, capture: true });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && _activeRowActionState) {
+        closeAllRowActionMenus();
+      }
+    });
+    window.addEventListener('resize', closeAllRowActionMenus, { passive: true });
+    window.addEventListener('scroll', (e) => {
+      if (e && e.target && e.target.id === 'floating-row-action-portal') return;
+      closeAllRowActionMenus();
+    }, { passive: true, capture: true });
 
     function renderCustomersTab() {
+      closeAllRowActionMenus();
       const searchVal = (document.getElementById('customer-search-input')?.value || '').trim().toUpperCase();
       const statusFilter = document.getElementById('customer-status-filter')?.value || 'all';
 
@@ -7711,13 +7840,15 @@ const INDONESIA_REGIONS = {
                         type="button"
                         onclick="toggleCustomerActionMenu(event, '${c.no_kk}')"
                         title="Opsi Lainnya"
-                        class="w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition"
+                        aria-haspopup="menu"
+                        aria-expanded="false"
+                        class="w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-slate-500 hover:text-slate-800 flex items-center justify-center transition cursor-pointer"
                       >
                         <i data-lucide="more-vertical" class="w-4 h-4"></i>
                       </button>
                       <div
                         id="cust-action-menu-${c.no_kk}"
-                        class="cust-action-dropdown hidden fixed z-[70] w-40 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
+                        class="cust-action-dropdown hidden"
                       >
                         <button
                           type="button"
@@ -8162,29 +8293,13 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     // 13. TAB 3: RIWAYAT PENGAMBILAN & PEMBATALAN LOG (+ REVERSAL GI-WARGA)
     // =========================================================================
-        function closeAllHistoryActionMenus() {
-      document.querySelectorAll('.hist-action-dropdown').forEach((el) => el.classList.add('hidden'));
+    function closeAllHistoryActionMenus() {
+      closeAllRowActionMenus();
     }
 
     function toggleHistoryActionMenu(event, logId) {
-      event.stopPropagation();
       const menu = document.getElementById(`hist-action-menu-${logId}`);
-      if (!menu) return;
-      const isCurrentlyOpen = !menu.classList.contains('hidden');
-      closeAllHistoryActionMenus();
-      if (!isCurrentlyOpen) {
-        // position:fixed agar menu tidak terpotong kontainer tabel overflow-x-auto
-        const rect = event.currentTarget.getBoundingClientRect();
-        const menuHeight = menu.offsetHeight || 96;
-        const spaceBelow = window.innerHeight - rect.bottom;
-        const useAbove = spaceBelow < menuHeight + 8 && rect.top > menuHeight;
-        menu.style.top = useAbove ? 'auto' : `${rect.bottom + 4}px`;
-        menu.style.bottom = useAbove ? `${window.innerHeight - rect.top + 4}px` : 'auto';
-        menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
-        menu.style.left = 'auto';
-        menu.classList.remove('hidden');
-        safeCreateIcons();
-      }
+      openFloatingRowActionMenu(event, menu, 'w-44');
     }
 
     function handleHistorySearchInput(inputEl) {
@@ -8210,18 +8325,8 @@ const INDONESIA_REGIONS = {
       renderHistoryTab();
     }
 
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('.dropdown-history-menu')) {
-        closeAllHistoryActionMenus();
-      }
-    });
-
-    // Menu aksi posisinya position:fixed, jadi harus ditutup saat halaman bergulir
-    // atau ukuran layar berubah agar tidak "melayang" di posisi salah.
-    window.addEventListener('resize', closeAllHistoryActionMenus, { passive: true });
-    window.addEventListener('scroll', closeAllHistoryActionMenus, { passive: true, capture: true });
-
     function renderHistoryTab() {
+      closeAllRowActionMenus();
       const cycleFilter = document.getElementById('history-cycle-filter')?.value || 'all';
       const searchVal = (document.getElementById('history-search-input')?.value || '').trim().toUpperCase();
       const cycleDays = Number(state.settings.cycleDays) || 30;
@@ -8344,13 +8449,15 @@ const INDONESIA_REGIONS = {
                       type="button"
                       onclick="toggleHistoryActionMenu(event, '${l.id}')"
                       title="Pilihan Aksi"
-                      class="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition shadow-2xs"
+                      aria-haspopup="menu"
+                      aria-expanded="false"
+                      class="w-7 h-7 rounded-lg border border-slate-200 bg-white text-slate-500 hover:text-slate-800 hover:bg-slate-100 inline-flex items-center justify-center transition shadow-2xs cursor-pointer"
                     >
                       <i data-lucide="more-vertical" class="w-4 h-4"></i>
                     </button>
                     <div
                       id="hist-action-menu-${l.id}"
-                      class="hist-action-dropdown hidden fixed z-[70] w-44 rounded-xl bg-white border border-slate-200 shadow-xl py-1 text-xs animate-fade-in"
+                      class="hist-action-dropdown hidden"
                     >
                       <button
                         type="button"
@@ -10006,7 +10113,9 @@ const INDONESIA_REGIONS = {
       const contentEl = document.getElementById('warehouse-unlocked-content');
       if (!gateEl || !contentEl) return;
 
-      if (!state.isAdminUnlocked) {
+      const isCashierViewOnly = (typeof canViewWarehouseStockReadOnly === 'function') && canViewWarehouseStockReadOnly() && !state.isAdminUnlocked;
+
+      if (!state.isAdminUnlocked && !isCashierViewOnly) {
         gateEl.classList.remove('hidden');
         contentEl.classList.add('hidden');
         const session = getAuthSession();
@@ -10064,14 +10173,120 @@ const INDONESIA_REGIONS = {
       gateEl.classList.add('hidden');
       contentEl.classList.remove('hidden');
 
+      const roBadgeEl = document.getElementById('warehouse-readonly-badge');
+      const headerSubtitleEl = document.getElementById('warehouse-header-subtitle');
+      const exportBtnEl = document.getElementById('btn-export-warehouse');
+      const lockBtnEl = document.getElementById('btn-lock-warehouse');
+      const mutFormEl = document.getElementById('warehouse-mutation-form');
+      const logCardEl = document.getElementById('warehouse-log-card');
+      const cashierNoteEl = document.getElementById('warehouse-cashier-view-note');
+
+      if (roBadgeEl) roBadgeEl.classList.toggle('hidden', !isCashierViewOnly);
+      if (headerSubtitleEl) {
+        headerSubtitleEl.textContent = isCashierViewOnly
+          ? 'Pemantauan saldo fisik real-time (Mode Baca / View-Only untuk Kasir)'
+          : 'Saldo fisik real-time & pencatatan mutasi penerimaan/pengeluaran';
+      }
+      if (exportBtnEl) exportBtnEl.classList.toggle('hidden', isCashierViewOnly);
+      if (lockBtnEl) lockBtnEl.classList.toggle('hidden', isCashierViewOnly);
+      if (mutFormEl) mutFormEl.classList.toggle('hidden', isCashierViewOnly);
+      if (logCardEl) logCardEl.classList.toggle('hidden', isCashierViewOnly);
+      if (cashierNoteEl) cashierNoteEl.classList.toggle('hidden', !isCashierViewOnly);
+
       const summary = getWarehouseStockSummary();
       const dateInput = document.getElementById('wh-form-date');
-      if (dateInput && !dateInput.value) {
+      if (!isCashierViewOnly && dateInput && !dateInput.value) {
         dateInput.value = state.simDate;
       }
 
       // Render 2 Kartu Saldo Gudang
       const cardsEl = document.getElementById('warehouse-balance-cards');
+      if (cardsEl && isCashierViewOnly) {
+        if (summary.stockRestricted) {
+          cardsEl.innerHTML = `
+            <div class="md:col-span-2 rounded-2xl border border-slate-200 bg-white shadow-2xs p-6 text-center text-xs text-slate-500">
+              Menunggu sinkronisasi saldo stok dari server...
+            </div>
+          `;
+        } else {
+          cardsEl.innerHTML = `
+            <!-- Kartu Stok Beras (View-Only Kasir) -->
+            <div class="rounded-2xl border ${summary.berasLow ? 'bg-rose-50/70 border-rose-300' : 'bg-white border-slate-200'} shadow-2xs p-4 space-y-3 overflow-hidden">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-xl bg-[#FEF3C7] border border-amber-200 flex items-center justify-center shrink-0">
+                    ${getBerasMaterialSVG('w-5 h-5')}
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="text-sm font-extrabold text-slate-900 truncate">Stok Beras</h3>
+                    <p class="text-[11px] text-slate-500 truncate">Batas aman &gt; ${summary.threshold} sak</p>
+                  </div>
+                </div>
+                ${
+                  summary.berasDeficit
+                    ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-700 text-white animate-pulse shrink-0 whitespace-nowrap">
+                        <i data-lucide="alert-octagon" class="w-3 h-3"></i>
+                        DEFISIT (${summary.berasStock} sak)
+                      </span>`
+                    : (summary.berasLow
+                      ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white animate-pulse shrink-0 whitespace-nowrap">
+                          <i data-lucide="alert-triangle" class="w-3 h-3"></i>
+                          Menipis (&le;${summary.threshold})
+                        </span>`
+                      : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0 whitespace-nowrap">
+                          Stok Aman
+                        </span>`)
+                }
+              </div>
+              <div class="pt-2 border-t border-slate-200/80">
+                <div class="p-3 rounded-xl ${summary.berasLow ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'} flex items-center justify-between">
+                  <span class="text-xs font-bold uppercase opacity-85">Sisa Fisik Tersedia</span>
+                  <span class="font-mono text-base font-extrabold">${summary.berasStock} sak</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Kartu Stok Gas LPG 3 kg (View-Only Kasir) -->
+            <div class="rounded-2xl border ${summary.gasLow ? 'bg-rose-50/70 border-rose-300' : 'bg-white border-slate-200'} shadow-2xs p-4 space-y-3 overflow-hidden">
+              <div class="flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2.5 min-w-0">
+                  <div class="w-10 h-10 rounded-xl bg-[#D1FAE5] border border-emerald-200 flex items-center justify-center shrink-0">
+                    ${getGasMaterialSVG('w-5 h-5')}
+                  </div>
+                  <div class="min-w-0">
+                    <h3 class="text-sm font-extrabold text-slate-900 truncate">Stok Gas LPG 3 kg</h3>
+                    <p class="text-[11px] text-slate-500 truncate">Batas aman &gt; ${summary.threshold} pcs</p>
+                  </div>
+                </div>
+                ${
+                  summary.gasDeficit
+                    ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-700 text-white animate-pulse shrink-0 whitespace-nowrap">
+                        <i data-lucide="alert-octagon" class="w-3 h-3"></i>
+                        DEFISIT (${summary.gasStock} pcs)
+                      </span>`
+                    : (summary.gasLow
+                      ? `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white animate-pulse shrink-0 whitespace-nowrap">
+                          <i data-lucide="alert-triangle" class="w-3 h-3"></i>
+                          Menipis (&le;${summary.threshold})
+                        </span>`
+                      : `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0 whitespace-nowrap">
+                          Stok Aman
+                        </span>`)
+                }
+              </div>
+              <div class="pt-2 border-t border-slate-200/80">
+                <div class="p-3 rounded-xl ${summary.gasLow ? 'bg-rose-600 text-white' : 'bg-slate-900 text-white'} flex items-center justify-between">
+                  <span class="text-xs font-bold uppercase opacity-85">Sisa Fisik Tersedia</span>
+                  <span class="font-mono text-base font-extrabold">${summary.gasStock} pcs</span>
+                </div>
+              </div>
+            </div>
+          `;
+        }
+        safeCreateIcons();
+        return;
+      }
+
       if (cardsEl) {
         cardsEl.innerHTML = `
           <!-- Kartu Stok Beras -->
@@ -10483,6 +10698,10 @@ const INDONESIA_REGIONS = {
     }
 
     function confirmDeleteWarehouseMutation(whId) {
+      if (!state.isAdminUnlocked || (typeof canViewWarehouseStockReadOnly === 'function' && canViewWarehouseStockReadOnly())) {
+        showToast('Akses Ditolak: Anda hanya memiliki akses lihat (view-only) untuk stok gudang.', 'error');
+        return;
+      }
       const target = state.warehouseLogs.find((w) => w.id === whId);
       if (!target || target.type === 'GI-WARGA' || target.type === 'GI-PELANGGAN') return;
 
@@ -12577,6 +12796,10 @@ const INDONESIA_REGIONS = {
       return getEffectiveOperationalRole() === 'admin';
     }
 
+    function canViewWarehouseStockReadOnly() {
+      return isCloudModeActive() && getEffectiveOperationalRole() === 'cashier';
+    }
+
     function syncSettingsTabAccessUI() {
       const allowed = canAccessSettingsTab();
       const deskBtn = document.getElementById('tab-btn-settings');
@@ -13276,7 +13499,7 @@ const INDONESIA_REGIONS = {
     }
 
     function getSnapshotSectionsForRole(role) {
-      if (role === 'cashier') return ['customers', 'logs'];
+      if (role === 'cashier') return ['customers', 'logs', 'stock_summary'];
       if (role === 'warehouse_admin') return ['warehouse_logs', 'stock_summary'];
       if (role === 'admin') return ['customers', 'logs', 'warehouse_logs', 'stock_summary'];
       return [];
