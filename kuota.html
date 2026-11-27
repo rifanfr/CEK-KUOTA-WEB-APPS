@@ -13,6 +13,11 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Konfigurasi runtime Supabase (tidak menaruh URL/Key hardcoded) -->
+  <script>
+    window.__APP_CONFIG__ = window.__APP_CONFIG__ || { supabaseUrl: '', supabaseAnonKey: '' };
+  </script>
+  <script src="config.js"></script>
 
   <style>
     @keyframes fadeIn {
@@ -81,36 +86,38 @@
       </p>
     </div>
 
-    <!-- STATE 4: HASIL KUOTA PELANGGAN (AKTIF) -->
+    <!-- STATE 4: HASIL KUOTA PELANGGAN (AKTIF - ZERO PII) -->
     <div id="view-content" class="hidden space-y-4">
-      <!-- Peringatan Kartu Lama / Hilang (Revoked Alert) -->
-      <div id="kiosk-revoked-alert" class="hidden p-3.5 rounded-2xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs flex items-start gap-2.5">
-        <i data-lucide="shield-alert" class="w-5 h-5 text-amber-400 shrink-0 mt-0.5"></i>
+      <!-- Peringatan Kartu Lama / Hilang (Revoked/Replaced Alert - Tanpa PII) -->
+      <div id="kiosk-revoked-alert" class="hidden p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-2.5">
+        <i data-lucide="shield-alert" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
         <div>
-          <p class="font-bold text-amber-300">Pemberitahuan: Kartu Fisik Ini Telah Diganti</p>
-          <p class="text-[11px] text-amber-200/90 mt-0.5">
-            Kartu QR ini pernah dilaporkan hilang dan telah digantikan dengan kartu baru: <strong id="kiosk-latest-id" class="font-mono text-white underline"></strong>. Sisa kuota di bawah tetap tersinkronisasi dengan akun keluarga Anda.
+          <p class="font-bold text-amber-900">Pemberitahuan: Kartu Fisik Ini Telah Diganti</p>
+          <p class="text-[11px] text-amber-800/90 mt-0.5">
+            Kartu QR ini pernah dilaporkan hilang dan telah digantikan dengan kartu resmi baru. Sisa kuota di bawah tetap tersinkronisasi aman dengan akun keluarga Anda — silakan ambil kartu pengganti Anda di loket resmi.
           </p>
         </div>
       </div>
 
-      <!-- Kartu Identitas Kepala Keluarga (Tersensor Aman) -->
-      <div class="p-4 rounded-2xl bg-slate-50 border border-slate-200/80">
-        <div>
-          <span id="kiosk-member-id" class="px-2.5 py-0.5 rounded-full bg-slate-900 text-emerald-400 font-mono text-[11px] font-bold tracking-wider inline-block">
-            KK-REG-00001-7909
+      <!-- Header Status Verifikasi Zero-PII -->
+      <div class="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <span class="px-2.5 py-0.5 rounded-full bg-slate-900 text-emerald-400 font-mono text-[11px] font-bold tracking-wider inline-flex items-center gap-1.5">
+            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+            <span>TERVERIFIKASI</span>
           </span>
-          <h3 id="kiosk-nama" class="mt-1.5 text-lg font-black text-slate-900 uppercase leading-snug">
-            -
+          <span class="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase tracking-wide">
+            Proteksi Zero-PII
+          </span>
+        </div>
+        <div>
+          <h3 id="kiosk-status-title" class="text-base font-black text-slate-900 leading-snug">
+            Informasi Kuota Pengambilan Resmi
           </h3>
-          <p id="kiosk-kk" class="font-mono text-xs font-bold text-slate-600 tracking-wider mt-0.5">
-            -
+          <p id="kiosk-ref-date" class="text-xs font-medium text-slate-500 mt-0.5">
+            Siklus bergulir 30 hari • Data real-time
           </p>
         </div>
-        <p id="kiosk-address" class="text-xs text-slate-500 mt-2.5 flex items-center gap-1.5 pt-2 border-t border-slate-200/60">
-          <i data-lucide="map-pin" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>
-          <span id="kiosk-address-text">-</span>
-        </p>
       </div>
 
       <!-- Rincian Status Kuota 30 Hari -->
@@ -180,29 +187,27 @@
   </div>
 
   <script>
-    const SUPABASE_URL = 'https://jziahfqjawqivesknkms.supabase.co';
-    const SUPABASE_KEY = 'sb_publishable_xglnlPm893o1r_Q1fXgaNA_MoS7GL11';
-    const CYCLE_DAYS = 30;
-    const MAX_BERAS = 5;
-    const MAX_GAS = 5;
+    const KIOSK_TIMEOUT_MS = 2800;
 
     let currentToken = '';
-    let currentCustomer = null;
+    let lastQuotaPayload = null;
+
+    function getKioskSupabaseConfig() {
+      const cfg = (typeof window !== 'undefined' && window.__APP_CONFIG__) ? window.__APP_CONFIG__ : {};
+      const url = String(cfg.supabaseUrl || '').trim().replace(/\/+$/, '');
+      const key = String(cfg.supabaseAnonKey || '').trim();
+      return { url, key };
+    }
 
     function safeCreateIcons() {
-      if (window.lucide) {
+      if (typeof window !== 'undefined' && window.lucide && typeof window.lucide.createIcons === 'function') {
         window.lucide.createIcons();
       }
     }
 
-    function formatKKMasked(kk) {
-      if (!kk || kk.length < 16) return kk || '-';
-      return `${kk.slice(0, 4)} •••• •••• ${kk.slice(12, 16)}`;
-    }
-
     function formatShortDateID(dateStr) {
       if (!dateStr) return '-';
-      const parts = dateStr.split('-');
+      const parts = String(dateStr).split('-');
       if (parts.length < 3) return dateStr;
       const y = parts[0];
       const m = Number(parts[1]);
@@ -211,68 +216,23 @@
       return `${d} ${months[m - 1] || m} ${y}`;
     }
 
-    function addDaysISO(dateStr, days) {
-      const d = new Date(dateStr + 'T00:00:00Z');
-      d.setUTCDate(d.getUTCDate() + days);
-      return d.toISOString().slice(0, 10);
-    }
-
-    function diffDaysISO(startStr, endStr) {
-      const d1 = new Date(startStr + 'T00:00:00Z');
-      const d2 = new Date(endStr + 'T00:00:00Z');
-      const diffTime = d2.getTime() - d1.getTime();
-      return Math.round(diffTime / (1000 * 60 * 60 * 24));
-    }
-
-    function getTodayISO() {
-      const now = new Date();
-      return now.toISOString().slice(0, 10);
-    }
-
-    function calculateItemStatus(noKK, itemType, logs, refDateISO) {
-      const maxQuota = itemType === 'beras' ? MAX_BERAS : MAX_GAS;
-      const qtyKey = itemType === 'beras' ? 'qty_beras' : 'qty_gas';
-      const windowStartISO = addDaysISO(refDateISO, -CYCLE_DAYS);
-
-      const logsInWindow = (logs || [])
-        .filter((l) => l.no_kk === noKK && (Number(l[qtyKey]) || 0) > 0 && l.date > windowStartISO && l.date <= refDateISO)
-        .sort((a, b) => a.date.localeCompare(b.date));
-
-      const usedInWindow = logsInWindow.reduce((sum, l) => sum + (Number(l[qtyKey]) || 0), 0);
-      const remaining = Math.max(0, maxQuota - usedInWindow);
-
-      if (usedInWindow > 0) {
-        const oldestLog = logsInWindow[0];
-        const nextCycleDate = addDaysISO(oldestLog.date, CYCLE_DAYS);
-        const daysLeft = Math.max(1, diffDaysISO(refDateISO, nextCycleDate));
-        const contextualLabel = remaining > 0
-          ? `Pemulihan kuota: ${formatShortDateID(nextCycleDate)} (${daysLeft} hr)`
-          : `Kuota Baru: ${formatShortDateID(nextCycleDate)} (${daysLeft} hr)`;
-
-        return {
-          used: usedInWindow,
-          remaining,
-          max: maxQuota,
-          daysLeft,
-          contextualLabel,
-        };
+    function formatItemLabel(itemData) {
+      if (!itemData || Number(itemData.used) <= 0 || !itemData.recovery_date) {
+        return 'Kuota penuh (siap dipakai)';
       }
-
-      return {
-        used: 0,
-        remaining: maxQuota,
-        max: maxQuota,
-        daysLeft: CYCLE_DAYS,
-        contextualLabel: 'Kuota penuh (siap dipakai)',
-      };
+      const dateText = formatShortDateID(itemData.recovery_date);
+      const daysLeft = Number(itemData.days_left) || 1;
+      if (Number(itemData.remaining) > 0) {
+        return `Pemulihan kuota: ${dateText} (${daysLeft} hr)`;
+      }
+      return `Kuota Baru: ${dateText} (${daysLeft} hr)`;
     }
 
     function getTokenFromURL() {
       const params = new URLSearchParams(window.location.search);
-      const val = params.get('id') || params.get('cek') || params.get('scan') || params.get('kk');
+      const val = params.get('t') || params.get('token') || params.get('id') || params.get('cek') || params.get('scan') || params.get('kk');
       if (val && val.trim()) return val.trim();
 
-      // Fallback: ambil dari pathname jika diakses via route /k/KK-REG-00001-7909
       const path = window.location.pathname;
       const m = path.match(/\/(?:k|c|kuota)\/([^\/\?#]+)/i);
       if (m && m[1]) {
@@ -281,90 +241,91 @@
       return '';
     }
 
-    async function fetchCustomerAndQuota(token) {
-      if (!token) return null;
-      const cleanToken = token.toUpperCase();
+    async function fetchPublicKioskQuota(token) {
+      const cleanToken = String(token || '').trim();
+      if (!cleanToken) return null;
 
-      const headers = {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`,
-        'Content-Type': 'application/json',
-      };
-
-      // 1. Ambil data customer secara spesifik dan aman (Targeted Query - Mencegah Mass PII Exposure)
-      let queryUrl = '';
-      const isFourDigit = /^\d{4}$/.test(cleanToken);
-      if (isFourDigit) {
-        // Pencarian 4 digit akhir: limit=2 untuk mendeteksi collision
-        queryUrl = `${SUPABASE_URL}/rest/v1/customers?or=(no_kk.like.*${cleanToken},member_id.ilike.*${cleanToken}*)&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=2`;
-      } else if (cleanToken.length === 16 && /^\d+$/.test(cleanToken)) {
-        // Pencarian 16 digit no KK
-        queryUrl = `${SUPABASE_URL}/rest/v1/customers?no_kk=eq.${cleanToken}&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=1`;
-      } else {
-        // Pencarian member_id / token kartu
-        queryUrl = `${SUPABASE_URL}/rest/v1/customers?or=(member_id.ilike.${cleanToken},member_id.ilike.*${cleanToken}*)&select=member_id,no_kk,nama,provinsi,kabupaten,kecamatan,desa,detail&limit=2`;
+      const { url, key } = getKioskSupabaseConfig();
+      if (!url || !key) {
+        const cfgErr = new Error('Konfigurasi runtime config.js (Supabase URL / Anon Key) belum tersedia.');
+        cfgErr.code = 'CONFIG_MISSING';
+        throw cfgErr;
       }
 
-      const resCust = await fetch(queryUrl, { headers });
-      if (!resCust.ok) throw new Error('Gagal memuat data pelanggan');
-      const customersFound = await resCust.json();
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timerId = controller ? setTimeout(() => controller.abort(), KIOSK_TIMEOUT_MS) : null;
 
-      // Cek tabrakan jika pencarian 4 digit:
-      // Jika ditemukan > 1 keluarga, JANGAN bocorkan PII/nama/alamat mana pun
-      if (isFourDigit && customersFound.length > 1) {
-        return {
-          collision: true,
-          message: 'Ditemukan lebih dari satu keluarga dengan 4 digit akhir yang sama. Demi privasi, silakan scan QR Kartu Kuota atau masukkan 16 digit Nomor KK lengkap.'
-        };
+      try {
+        const res = await fetch(`${url}/rest/v1/rpc/get_public_kiosk_quota`, {
+          method: 'POST',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${key}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ p_token: cleanToken }),
+          signal: controller ? controller.signal : undefined,
+        });
+
+        if (res.status === 429) {
+          const rlJson = await res.json().catch(() => ({}));
+          return {
+            status: 'RATE_LIMITED',
+            retry_after_seconds: Number(rlJson.retry_after_seconds) || 60,
+            message: rlJson.message || 'Terlalu banyak permintaan pengecekan. Silakan tunggu 1 menit sebelum mencoba kembali.',
+          };
+        }
+
+        if (!res.ok) {
+          throw new Error(`HTTP_${res.status}`);
+        }
+
+        const payload = await res.json();
+        if (!payload || typeof payload !== 'object') {
+          throw new Error('INVALID_RPC_RESPONSE');
+        }
+        return payload;
+      } catch (err) {
+        if (err && err.name === 'AbortError') {
+          const tErr = new Error('Koneksi ke server melebihi batas waktu.');
+          tErr.code = 'ETIMEDOUT';
+          throw tErr;
+        }
+        throw err;
+      } finally {
+        if (timerId) clearTimeout(timerId);
       }
-
-      let cust = customersFound.find(c => (c.no_kk || '').endsWith(cleanToken) || (c.member_id || '').endsWith(cleanToken)) || customersFound[0] || null;
-
-      if (!cust) return null;
-
-      // 2. Ambil logs transaksi pelanggan tersebut
-      const today = getTodayISO();
-      const thirtyFiveDaysAgo = addDaysISO(today, -35);
-      const resLogs = await fetch(`${SUPABASE_URL}/rest/v1/logs?no_kk=eq.${cust.no_kk}&date=gte.${thirtyFiveDaysAgo}&select=id,date,time,no_kk,nama,qty_beras,qty_gas,revisi_note`, { headers });
-      let logs = [];
-      if (resLogs.ok) {
-        logs = await resLogs.json();
-      }
-
-      const beras = calculateItemStatus(cust.no_kk, 'beras', logs, today);
-      const gas = calculateItemStatus(cust.no_kk, 'gas', logs, today);
-
-      return {
-        customer: cust,
-        beras,
-        gas,
-      };
     }
 
-    function renderCitizenData(data) {
-      const cust = data.customer;
-      currentCustomer = cust;
+    function showKioskErrorView(title, message) {
+      document.getElementById('view-loading').classList.add('hidden');
+      document.getElementById('view-content').classList.add('hidden');
+      document.getElementById('view-exit').classList.add('hidden');
+      const titleEl = document.getElementById('error-title');
+      if (titleEl) titleEl.textContent = title;
+      const msgEl = document.getElementById('error-message');
+      if (msgEl) msgEl.textContent = message;
+      document.getElementById('view-error').classList.remove('hidden');
+      safeCreateIcons();
+    }
 
-      // Periksa apakah URL token adalah kartu yang pernah di-revoke
-      const tokenURL = getTokenFromURL().toUpperCase();
-      const isRevoked = Array.isArray(cust.revoked_ids) && cust.revoked_ids.some(r => String(r).toUpperCase() === tokenURL);
+    function renderCitizenData(payload) {
+      lastQuotaPayload = payload;
+
       const revAlert = document.getElementById('kiosk-revoked-alert');
       if (revAlert) {
-        if (isRevoked) {
-          revAlert.classList.remove('hidden');
-          const latestIdEl = document.getElementById('kiosk-latest-id');
-          if (latestIdEl) latestIdEl.textContent = cust.member_id || 'Kartu Resmi Baru';
-        } else {
-          revAlert.classList.add('hidden');
-        }
+        revAlert.classList.toggle('hidden', payload.token_status !== 'REPLACED');
       }
 
-      document.getElementById('kiosk-member-id').textContent = cust.member_id || 'KK-REG-00001-7909';
-      document.getElementById('kiosk-nama').textContent = cust.nama || '-';
-      document.getElementById('kiosk-kk').textContent = formatKKMasked(cust.no_kk);
+      const refDateEl = document.getElementById('kiosk-ref-date');
+      if (refDateEl) {
+        const refText = payload.reference_date ? formatShortDateID(payload.reference_date) : 'Hari ini';
+        const cycleDays = Number(payload.cycle_days) || 30;
+        refDateEl.textContent = `Referensi tanggal: ${refText} • Siklus ${cycleDays} hari`;
+      }
 
-      const wil = cust.kabupaten || cust.provinsi || 'CIMAHI';
-      document.getElementById('kiosk-address-text').textContent = `${wil}, ••••••••`;
+      const beras = payload.beras || { used: 0, remaining: 5, max: 5, days_left: 30, recovery_date: null };
+      const gas = payload.gas || { used: 0, remaining: 5, max: 5, days_left: 30, recovery_date: null };
 
       // Render Beras
       const berasCard = document.getElementById('kiosk-beras-card');
@@ -372,17 +333,17 @@
       const berasBadge = document.getElementById('kiosk-beras-badge');
       const berasLabelText = document.getElementById('kiosk-beras-label-text');
 
-      berasUsed.textContent = `Terpakai: ${data.beras.used} / ${data.beras.max} karung`;
-      berasLabelText.textContent = data.beras.contextualLabel;
+      berasUsed.textContent = `Terpakai: ${beras.used} / ${beras.max} karung`;
+      berasLabelText.textContent = formatItemLabel(beras);
 
-      if (data.beras.remaining === 0) {
+      if (Number(beras.remaining) === 0) {
         berasCard.className = 'p-3.5 rounded-2xl border border-rose-200 bg-rose-50/70 transition-all';
         berasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-rose-100 text-rose-700 border border-rose-300';
         berasBadge.textContent = '0 karung (Habis)';
       } else {
         berasCard.className = 'p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 transition-all';
         berasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300';
-        berasBadge.textContent = `${data.beras.remaining} sak (Tersedia)`;
+        berasBadge.textContent = `${beras.remaining} sak (Tersedia)`;
       }
 
       // Render Gas
@@ -391,17 +352,17 @@
       const gasBadge = document.getElementById('kiosk-gas-badge');
       const gasLabelText = document.getElementById('kiosk-gas-label-text');
 
-      gasUsed.textContent = `Terpakai: ${data.gas.used} / ${data.gas.max} tabung`;
-      gasLabelText.textContent = data.gas.contextualLabel;
+      gasUsed.textContent = `Terpakai: ${gas.used} / ${gas.max} tabung`;
+      gasLabelText.textContent = formatItemLabel(gas);
 
-      if (data.gas.remaining === 0) {
+      if (Number(gas.remaining) === 0) {
         gasCard.className = 'p-3.5 rounded-2xl border border-rose-200 bg-rose-50/70 transition-all';
         gasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-rose-100 text-rose-700 border border-rose-300';
         gasBadge.textContent = '0 pcs (Habis)';
       } else {
         gasCard.className = 'p-3.5 rounded-2xl border border-emerald-200 bg-emerald-50/70 transition-all';
         gasBadge.className = 'px-2.5 py-1 rounded-xl text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300';
-        gasBadge.textContent = `${data.gas.remaining} pcs (Tersedia)`;
+        gasBadge.textContent = `${gas.remaining} pcs (Tersedia)`;
       }
 
       document.getElementById('view-loading').classList.add('hidden');
@@ -412,45 +373,59 @@
       safeCreateIcons();
     }
 
+    function applyKioskPayload(payload) {
+      if (!payload || payload.status === 'ERR_INVALID_OR_UNAVAILABLE') {
+        showKioskErrorView(
+          'Token Kartu Tidak Tersedia',
+          'Token kartu kuota tidak valid, sudah dicabut, atau belum tersedia. Silakan scan QR Kartu Resmi terbaru.'
+        );
+        return false;
+      }
+
+      if (payload.status === 'RATE_LIMITED') {
+        const retrySec = Number(payload.retry_after_seconds) || 60;
+        showKioskErrorView(
+          'Batas Pengecekan Sementara',
+          payload.message || `Terlalu banyak permintaan pengecekan. Silakan tunggu ${retrySec} detik sebelum mencoba lagi.`
+        );
+        return false;
+      }
+
+      if (payload.status === 'OK') {
+        renderCitizenData(payload);
+        return true;
+      }
+
+      showKioskErrorView(
+        'Status Tidak Diketahui',
+        'Respon server tidak dapat diproses. Silakan coba beberapa saat lagi.'
+      );
+      return false;
+    }
+
     async function init() {
       currentToken = getTokenFromURL();
       if (!currentToken) {
-        document.getElementById('view-loading').classList.add('hidden');
-        document.getElementById('error-message').textContent = 'Tautan tidak valid atau kode identitas pelanggan belum dimasukkan.';
-        document.getElementById('view-error').classList.remove('hidden');
-        safeCreateIcons();
+        showKioskErrorView(
+          'Tautan Kiosk Tidak Valid',
+          'Tautan tidak memiliki token QR kartu yang valid. Silakan scan ulang QR Kartu Kuota resmi Anda.'
+        );
         return;
       }
 
       try {
-        const data = await fetchCustomerAndQuota(currentToken);
-        if (!data) {
-          document.getElementById('view-loading').classList.add('hidden');
-          const titleEl = document.getElementById('error-title');
-          if (titleEl) titleEl.textContent = 'Data Pelanggan Tidak Ditemukan';
-          document.getElementById('error-message').textContent = 'Data pelanggan tidak ditemukan. Periksa kembali nomor KK atau scan QR Kartu.';
-          document.getElementById('view-error').classList.remove('hidden');
-          safeCreateIcons();
-          return;
-        }
-        if (data.collision) {
-          document.getElementById('view-loading').classList.add('hidden');
-          const titleEl = document.getElementById('error-title');
-          if (titleEl) titleEl.textContent = 'Proteksi Privasi Pelanggan';
-          document.getElementById('error-message').textContent = data.message;
-          document.getElementById('view-error').classList.remove('hidden');
-          safeCreateIcons();
-          return;
-        }
-        renderCitizenData(data);
+        const payload = await fetchPublicKioskQuota(currentToken);
+        applyKioskPayload(payload);
       } catch (err) {
         console.error('Error load citizen quota:', err);
-        document.getElementById('view-loading').classList.add('hidden');
-        const titleEl = document.getElementById('error-title');
-        if (titleEl) titleEl.textContent = 'Kendala Koneksi Server';
-        document.getElementById('error-message').textContent = 'Koneksi ke server database mengalami kendala. Periksa jaringan internet HP Anda.';
-        document.getElementById('view-error').classList.remove('hidden');
-        safeCreateIcons();
+        if (err && err.code === 'CONFIG_MISSING') {
+          showKioskErrorView('Konfigurasi Sistem Belum Siap', err.message);
+        } else {
+          showKioskErrorView(
+            'Kendala Koneksi Server',
+            'Koneksi ke server database mengalami kendala. Periksa jaringan internet HP Anda.'
+          );
+        }
       }
     }
 
@@ -464,17 +439,8 @@
       safeCreateIcons();
 
       try {
-        const data = await fetchCustomerAndQuota(currentToken);
-        if (data && !data.collision) {
-          renderCitizenData(data);
-        } else if (data && data.collision) {
-          document.getElementById('view-loading').classList.add('hidden');
-          document.getElementById('view-content').classList.add('hidden');
-          const titleEl = document.getElementById('error-title');
-          if (titleEl) titleEl.textContent = 'Proteksi Privasi Pelanggan';
-          document.getElementById('error-message').textContent = data.message;
-          document.getElementById('view-error').classList.remove('hidden');
-        }
+        const payload = await fetchPublicKioskQuota(currentToken);
+        applyKioskPayload(payload);
       } catch (err) {
         console.error('Refresh error:', err);
       } finally {
@@ -485,13 +451,10 @@
     }
 
     function handleClosePage() {
-      // 1. Coba tutup tab seketika jika didukung browser
       try {
         window.close();
       } catch (e) {}
 
-      // 2. Jika browser mobile sandbox membatasi window.close():
-      // Alihkan langsung ke beranda publik (bukan portal admin)
       setTimeout(() => {
         window.location.replace('/');
       }, 100);

@@ -1,0 +1,9 @@
+{
+  "name": "cekkuota-kk",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Catat Kuota KK - pencatatan kuota KK, siklus 30 hari & stok gudang",
+  "scripts": {
+    "build": "node scripts/generate-config.js"
+  }
+}
