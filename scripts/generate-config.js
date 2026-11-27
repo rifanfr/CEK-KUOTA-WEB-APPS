@@ -21,7 +21,7 @@ const outPath = path.join(__dirname, '..', 'config.js');
 
 const content = `// GENERATED FILE - jangan diedit manual.
 // Dibuat oleh scripts/generate-config.js dari environment variable.
-window.__APP_CONFIG__ = window.__APP_CONFIG__ || ${JSON.stringify(
+window.__APP_CONFIG__ = ${JSON.stringify(
   { supabaseUrl: url, supabaseAnonKey: anonKey },
   null,
   2

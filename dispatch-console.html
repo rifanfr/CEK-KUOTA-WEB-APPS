@@ -37,10 +37,10 @@
     dan SUPABASE_ANON_KEY. File config.js dihasilkan dan tidak di-commit.
     Jika config.js tidak ada / kosong, aplikasi berjalan mode offline lokal.
   -->
+  <script src="config.js"></script>
   <script>
     window.__APP_CONFIG__ = window.__APP_CONFIG__ || { supabaseUrl: '', supabaseAnonKey: '' };
   </script>
-  <script src="config.js"></script>
 
   <style>
     body {
@@ -3971,6 +3971,19 @@ const INDONESIA_REGIONS = {
       supabaseKey: (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || '',
     };
 
+    function mergeSettingsWithRuntimeConfig(rawSettings) {
+      const safe = (rawSettings && typeof rawSettings === 'object') ? { ...rawSettings } : {};
+      delete safe.supabaseUrl;
+      delete safe.supabaseKey;
+      const merged = { ...DEFAULT_SETTINGS, ...safe };
+      if (typeof getSupabaseConfig === 'function') {
+        const cfg = getSupabaseConfig();
+        merged.supabaseUrl = cfg.url;
+        merged.supabaseKey = cfg.key;
+      }
+      return merged;
+    }
+
     let state = {
       settings: { ...DEFAULT_SETTINGS },
       customers: [],
@@ -4703,8 +4716,12 @@ const INDONESIA_REGIONS = {
         const syncMetaRow = metaMap.get('sync_meta');
         const syncRevRow = metaMap.get('sync_rev');
 
+        let hadStaleSettingsConfig = false;
         if (settingsRow && settingsRow.value) {
-          state.settings = { ...DEFAULT_SETTINGS, ...settingsRow.value };
+          state.settings = mergeSettingsWithRuntimeConfig(settingsRow.value);
+          hadStaleSettingsConfig =
+            settingsRow.value.supabaseUrl !== state.settings.supabaseUrl ||
+            settingsRow.value.supabaseKey !== state.settings.supabaseKey;
         }
         state.customers = custRows || [];
         state.logs = logRows || [];
@@ -4725,7 +4742,7 @@ const INDONESIA_REGIONS = {
         const syncMeta = syncMetaRow ? { ...this._defaultSyncMeta(), ...syncMetaRow } : this._defaultSyncMeta();
         this._persistSyncMetaCache(syncMeta);
 
-        return { metaMap, syncMeta, hadStaleInFlight: (outboxRows || []).some((e) => e && e.status === 'in_flight') };
+        return { metaMap, syncMeta, hadStaleSettingsConfig, hadStaleInFlight: (outboxRows || []).some((e) => e && e.status === 'in_flight') };
       },
       async initAndMigrateFromLocalStorage() {
         return withStorageLock(async () => {
@@ -4788,7 +4805,10 @@ const INDONESIA_REGIONS = {
             return meta;
           }
 
-          const { syncMeta, hadStaleInFlight } = await this._hydrateFromTx(tx);
+          const { syncMeta, hadStaleSettingsConfig, hadStaleInFlight } = await this._hydrateFromTx(tx);
+          if (hadStaleSettingsConfig) {
+            tx.objectStore('settings_and_meta').put({ key: 'settings', value: state.settings });
+          }
           if (hadStaleInFlight) {
             this._writeStoreArray(tx.objectStore('outbox'), _idbOutboxCache);
           }
@@ -5199,7 +5219,9 @@ const INDONESIA_REGIONS = {
 
       const resSettings = safeReadStorageJSON(STORAGE_KEYS.SETTINGS, null, isPlainObj);
       if (resSettings.corrupted) corruptedKeys.push('Pengaturan');
-      else if (resSettings.value) state.settings = { ...DEFAULT_SETTINGS, ...resSettings.value };
+      else if (resSettings.value) {
+        state.settings = mergeSettingsWithRuntimeConfig(resSettings.value);
+      }
 
       const activeOutboxRequestIds = new Set(
         ((typeof OutboxManager !== 'undefined' && OutboxManager.getEntries) ? OutboxManager.getEntries() : [])
@@ -5348,7 +5370,7 @@ const INDONESIA_REGIONS = {
 
       const resSettings = safeReadStorageJSON(STORAGE_KEYS.SETTINGS, null, isPlainObj);
       if (resSettings.ok && resSettings.value) {
-        const merged = { ...DEFAULT_SETTINGS, ...resSettings.value };
+        const merged = mergeSettingsWithRuntimeConfig(resSettings.value);
         if (JSON.stringify(merged) !== JSON.stringify(state.settings)) {
           state.settings = merged;
           changed = true;
@@ -11538,10 +11560,11 @@ const INDONESIA_REGIONS = {
       }
       document.getElementById('set-low-stock').value = state.settings.lowStockThreshold || 20;
 
+      const { url: runtimeUrl, key: runtimeKey } = getSupabaseConfig();
       const urlEl = document.getElementById('set-supabase-url');
       const keyEl = document.getElementById('set-supabase-key');
-      if (urlEl) urlEl.value = state.settings.supabaseUrl || DEFAULT_SUPABASE_URL;
-      if (keyEl) keyEl.value = state.settings.supabaseKey || DEFAULT_SUPABASE_KEY;
+      if (urlEl) urlEl.value = runtimeUrl;
+      if (keyEl) keyEl.value = runtimeKey;
 
       const provEl = document.getElementById('set-default-prov');
       const kabEl = document.getElementById('set-default-kab');
@@ -11600,8 +11623,7 @@ const INDONESIA_REGIONS = {
       const lowStockThreshold = parseInt(document.getElementById('set-low-stock').value, 10);
       const defaultProv = document.getElementById('set-default-prov').value;
       const defaultKab = document.getElementById('set-default-kab').value;
-      const supabaseUrl = (document.getElementById('set-supabase-url')?.value || state.settings.supabaseUrl || DEFAULT_SUPABASE_URL).trim();
-      const supabaseKey = (document.getElementById('set-supabase-key')?.value || state.settings.supabaseKey || DEFAULT_SUPABASE_KEY).trim();
+      const { url: supabaseUrl, key: supabaseKey } = getSupabaseConfig();
 
       const existingPin = String(state.settings?.adminPin || '').trim();
       const hasExistingPin = existingPin.length > 0;
@@ -11790,54 +11812,48 @@ const INDONESIA_REGIONS = {
     let cloudStatus = 'offline'; // 'connected' | 'syncing' | 'offline'
 
     function getSupabaseConfig() {
-      const configUrl = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseUrl) || DEFAULT_SUPABASE_URL;
-      const configKey = (window.__APP_CONFIG__ && window.__APP_CONFIG__.supabaseAnonKey) || DEFAULT_SUPABASE_KEY;
+      const appCfg = (typeof window !== 'undefined' && window.__APP_CONFIG__) ? window.__APP_CONFIG__ : null;
+      const url = String((appCfg && appCfg.supabaseUrl) || DEFAULT_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+      const key = String((appCfg && appCfg.supabaseAnonKey) || DEFAULT_SUPABASE_KEY || '').trim();
 
-      // Prioritas 1: DEFAULT_SUPABASE_URL & DEFAULT_SUPABASE_KEY dari window.__APP_CONFIG__ (config.js)
-      // Untuk build Staging, jika DEFAULT_SUPABASE_URL tersedia, selalu gunakan URL tersebut.
-      // Prioritas 2 (Fallback): state.settings.supabaseUrl & state.settings.supabaseKey
-      // Prioritas 3 (Fallback DOM input): set-supabase-url & set-supabase-key
-      const url = (configUrl || (state && state.settings && state.settings.supabaseUrl) || document.getElementById('set-supabase-url')?.value || '').trim().replace(/\/+$/, '');
-      const key = (configKey || (state && state.settings && state.settings.supabaseKey) || document.getElementById('set-supabase-key')?.value || '').trim();
+      // Sinkronkan state.settings dan bersihkan/timpa nilai Supabase lama di localStorage
+      if (typeof state !== 'undefined' && state && state.settings) {
+        if (state.settings.supabaseUrl !== url) state.settings.supabaseUrl = url;
+        if (state.settings.supabaseKey !== key) state.settings.supabaseKey = key;
+      }
 
-      // Pembersihan khusus hanya untuk konfigurasi Supabase lama yang tersimpan, tanpa membersihkan data aplikasi
-      if (configUrl && state && state.settings) {
-        let settingsDirty = false;
-        if (state.settings.supabaseUrl !== url) {
-          state.settings.supabaseUrl = url;
-          settingsDirty = true;
-        }
-        if (configKey && state.settings.supabaseKey !== key) {
-          state.settings.supabaseKey = key;
-          settingsDirty = true;
-        }
-        if (settingsDirty && typeof localStorage !== 'undefined' && typeof STORAGE_KEYS !== 'undefined') {
-          try {
-            const rawStored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
-            if (rawStored) {
-              const parsed = JSON.parse(rawStored);
-              if (parsed && typeof parsed === 'object') {
-                parsed.supabaseUrl = url;
-                if (configKey) parsed.supabaseKey = key;
+      if (typeof localStorage !== 'undefined' && typeof STORAGE_KEYS !== 'undefined') {
+        try {
+          const rawStored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+          if (rawStored) {
+            const parsed = JSON.parse(rawStored);
+            if (parsed && typeof parsed === 'object') {
+              const hasStoredUrl = Object.prototype.hasOwnProperty.call(parsed, 'supabaseUrl');
+              const hasStoredKey = Object.prototype.hasOwnProperty.call(parsed, 'supabaseKey');
+              if ((hasStoredUrl && parsed.supabaseUrl !== url) || (hasStoredKey && parsed.supabaseKey !== key)) {
+                if (url) parsed.supabaseUrl = url;
+                else delete parsed.supabaseUrl;
+                if (key) parsed.supabaseKey = key;
+                else delete parsed.supabaseKey;
                 localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(parsed));
               }
             }
-          } catch (e) {}
-        }
+          }
+        } catch (e) {}
       }
 
       // Bersihkan juga legacy key standalone lama jika pernah tersimpan di localStorage
       if (typeof localStorage !== 'undefined') {
-        ['supabase_url', 'supabase_key', 'supabaseUrl', 'supabaseKey', 'catat_kuota_supabase_url', 'catat_kuota_supabase_key'].forEach((k) => {
+        ['supabase_url', 'supabase_key', 'supabaseUrl', 'supabaseKey', 'catat_kuota_supabase_url', 'catat_kuota_supabase_key', 'SUPABASE_URL', 'SUPABASE_ANON_KEY'].forEach((k) => {
           try { localStorage.removeItem(k); } catch (e) {}
         });
       }
 
       // Sinkronkan input form pengaturan jika elemen form telah tersedia di DOM
       const urlInput = document.getElementById('set-supabase-url');
-      if (urlInput && url && urlInput.value !== url) urlInput.value = url;
+      if (urlInput && urlInput.value !== url) urlInput.value = url;
       const keyInput = document.getElementById('set-supabase-key');
-      if (keyInput && key && keyInput.value !== key) keyInput.value = key;
+      if (keyInput && keyInput.value !== key) keyInput.value = key;
 
       return { url, key };
     }
