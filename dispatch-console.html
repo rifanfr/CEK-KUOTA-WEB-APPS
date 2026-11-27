@@ -51,6 +51,8 @@
         if (!url || !key || !/^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(url)) return;
         var params = new URLSearchParams(window.location.search);
         if (params.get('id') || params.get('cek') || params.get('scan') || params.get('kk')) return;
+        var callbackStr = String(window.location.hash || '') + '&' + String(window.location.search || '');
+        var hasAuthCallback = /(access_token=|token_hash=|type=(recovery|invite|signup|magiclink|email)|error_code=)/i.test(callbackStr);
         var raw = sessionStorage.getItem('catat_kuota_supabase_auth_session_v1') || localStorage.getItem('catat_kuota_supabase_auth_session_v1');
         var session = raw ? JSON.parse(raw) : null;
         var hasValidSession = Boolean(
@@ -58,7 +60,7 @@
           session.access_token &&
           !(session.expires_at && Number(session.expires_at) <= Date.now() && !session.refresh_token)
         );
-        if (!hasValidSession) {
+        if (!hasValidSession || hasAuthCallback) {
           document.documentElement.classList.add('auth-gate-locked');
         }
       } catch (e) {}
@@ -1724,7 +1726,7 @@
               <div>
                 <h3 class="text-sm sm:text-base font-bold text-slate-900">Kelola Akun Petugas</h3>
                 <p class="text-xs text-slate-500 mt-0.5">
-                  Tambah atau hapus akun login petugas Supabase Auth (khusus Admin).
+                  Undang petugas via email aktivasi, kirim reset kata sandi, atau hapus akun (khusus Admin).
                 </p>
               </div>
             </div>
@@ -1739,51 +1741,66 @@
             </button>
           </div>
 
-          <form id="acct-mgmt-form" onsubmit="acctMgmtHandleCreateSubmit(event)" class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-3.5 rounded-xl bg-slate-50 border border-slate-200 items-end">
-            <div class="sm:col-span-4">
-              <label for="acct-mgmt-email" class="block text-[11px] font-bold text-slate-700 mb-1">Email Petugas</label>
-              <input
-                type="email"
-                id="acct-mgmt-email"
-                required
-                autocomplete="off"
-                placeholder="kasir@organisasi.id"
-                class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
+          <form id="acct-mgmt-form" onsubmit="acctMgmtHandleCreateSubmit(event)" class="p-3.5 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+              <div id="acct-mgmt-email-col" class="sm:col-span-6">
+                <label for="acct-mgmt-email" class="block text-[11px] font-bold text-slate-700 mb-1">Email Aktif Petugas</label>
+                <input
+                  type="email"
+                  id="acct-mgmt-email"
+                  required
+                  autocomplete="off"
+                  placeholder="kasir@gmail.com"
+                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div id="acct-mgmt-password-col" class="hidden sm:col-span-3">
+                <label for="acct-mgmt-password" class="block text-[11px] font-bold text-slate-700 mb-1">Kata Sandi (min. 6)</label>
+                <input
+                  type="password"
+                  id="acct-mgmt-password"
+                  minlength="6"
+                  autocomplete="new-password"
+                  placeholder="••••••"
+                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+              <div id="acct-mgmt-role-col" class="sm:col-span-3">
+                <label for="acct-mgmt-role" class="block text-[11px] font-bold text-slate-700 mb-1">Role Operasional</label>
+                <select
+                  id="acct-mgmt-role"
+                  required
+                  class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="cashier">cashier (Kasir)</option>
+                  <option value="warehouse_admin">warehouse_admin (Gudang)</option>
+                  <option value="admin">admin (Admin Penuh)</option>
+                </select>
+              </div>
+              <div id="acct-mgmt-submit-col" class="sm:col-span-3">
+                <button
+                  type="submit"
+                  id="acct-mgmt-submit-btn"
+                  class="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+                >
+                  <i data-lucide="mail-plus" class="w-3.5 h-3.5"></i>
+                  <span>Kirim Undangan</span>
+                </button>
+              </div>
             </div>
-            <div class="sm:col-span-3">
-              <label for="acct-mgmt-password" class="block text-[11px] font-bold text-slate-700 mb-1">Kata Sandi (min. 6)</label>
-              <input
-                type="password"
-                id="acct-mgmt-password"
-                required
-                minlength="6"
-                autocomplete="new-password"
-                placeholder="••••••"
-                class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              />
-            </div>
-            <div class="sm:col-span-3">
-              <label for="acct-mgmt-role" class="block text-[11px] font-bold text-slate-700 mb-1">Role Operasional</label>
-              <select
-                id="acct-mgmt-role"
-                required
-                class="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-              >
-                <option value="cashier">cashier (Kasir)</option>
-                <option value="warehouse_admin">warehouse_admin (Gudang)</option>
-                <option value="admin">admin (Admin Penuh)</option>
-              </select>
-            </div>
-            <div class="sm:col-span-2">
-              <button
-                type="submit"
-                id="acct-mgmt-submit-btn"
-                class="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
-              >
-                <i data-lucide="user-plus" class="w-3.5 h-3.5"></i>
-                <span>Buat Akun</span>
-              </button>
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <label class="inline-flex items-center gap-2 text-[11px] font-medium text-slate-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  id="acct-mgmt-manual-mode"
+                  onchange="acctMgmtToggleCreateMode()"
+                  class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                />
+                <span>Buat dengan kata sandi awal manual (opsional untuk akun testing/.local)</span>
+              </label>
+              <span id="acct-mgmt-mode-hint" class="text-[11px] text-slate-500">
+                Petugas akan menerima email tautan aktivasi untuk membuat kata sandi sendiri.
+              </span>
             </div>
           </form>
 
@@ -1795,12 +1812,13 @@
                 <tr>
                   <th class="py-2.5 px-3.5 text-left font-bold">Email</th>
                   <th class="py-2.5 px-3.5 text-left font-bold">Role</th>
+                  <th class="py-2.5 px-3.5 text-left font-bold">Status</th>
                   <th class="py-2.5 px-3.5 text-right font-bold">Aksi</th>
                 </tr>
               </thead>
               <tbody id="acct-mgmt-tbody" class="divide-y divide-slate-100 bg-white">
                 <tr>
-                  <td colspan="3" class="py-4 px-3.5 text-center text-slate-400">Membuka tab Pengaturan untuk memuat akun...</td>
+                  <td colspan="4" class="py-4 px-3.5 text-center text-slate-400">Membuka tab Pengaturan untuk memuat akun...</td>
                 </tr>
               </tbody>
             </table>
@@ -1953,11 +1971,19 @@
           />
         </div>
 
-        <div class="flex items-center justify-between text-xs">
+        <div class="flex items-center justify-between text-xs gap-2">
           <label class="flex items-center gap-2 cursor-pointer text-slate-600 select-none">
             <input type="checkbox" id="auth-remember-me" checked class="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
             <span>Ingat saya di perangkat ini</span>
           </label>
+          <button
+            type="button"
+            id="auth-forgot-link-btn"
+            onclick="setAuthModalView('forgot')"
+            class="text-xs font-bold text-emerald-700 hover:text-emerald-800 hover:underline transition cursor-pointer shrink-0"
+          >
+            Lupa kata sandi?
+          </button>
         </div>
 
         <div id="auth-login-error" role="alert" aria-live="polite" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
@@ -1971,6 +1997,190 @@
           <span>Masuk ke Sistem</span>
         </button>
       </form>
+
+      <!-- Form Lupa Kata Sandi (Kirim Email Recovery Mandiri) -->
+      <form id="auth-forgot-form" onsubmit="handleForgotPasswordSubmit(event)" class="hidden space-y-3.5">
+        <p class="text-xs text-slate-600 leading-relaxed">
+          Masukkan email petugas yang terdaftar. Tautan untuk membuat kata sandi baru akan dikirim ke inbox Anda.
+        </p>
+
+        <div class="space-y-1">
+          <label for="auth-forgot-email" class="block text-xs font-bold text-slate-700">Email Aktif Petugas</label>
+          <input
+            type="email"
+            id="auth-forgot-email"
+            required
+            autocomplete="email"
+            placeholder="petugas@gmail.com"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div id="auth-forgot-status" role="status" aria-live="polite" class="hidden p-2.5 rounded-xl text-xs font-medium"></div>
+
+        <button
+          type="submit"
+          id="auth-forgot-submit-btn"
+          class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+        >
+          <i data-lucide="mail" class="w-4 h-4"></i>
+          <span>Kirim Tautan Reset Sandi</span>
+        </button>
+
+        <button
+          type="button"
+          id="auth-forgot-back-btn"
+          onclick="setAuthModalView('login')"
+          class="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition cursor-pointer"
+        >
+          <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+          <span>Kembali ke Halaman Login</span>
+        </button>
+      </form>
+
+      <!-- Form Aktivasi Akun Baru / Atur Ulang Kata Sandi (Dari Tautan Email) -->
+      <form id="auth-setpass-form" onsubmit="handleSetPasswordSubmit(event)" class="hidden space-y-3.5">
+        <div id="auth-setpass-context" class="p-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-900 text-xs font-medium">
+          Buat kata sandi baru untuk mengamankan akun Anda.
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-setpass-new" class="block text-xs font-bold text-slate-700">Kata Sandi Baru (min. 6 karakter)</label>
+          <input
+            type="password"
+            id="auth-setpass-new"
+            required
+            minlength="6"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-setpass-confirm" class="block text-xs font-bold text-slate-700">Konfirmasi Kata Sandi Baru</label>
+          <input
+            type="password"
+            id="auth-setpass-confirm"
+            required
+            minlength="6"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div id="auth-setpass-error" role="alert" aria-live="polite" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
+
+        <button
+          type="submit"
+          id="auth-setpass-submit-btn"
+          class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+        >
+          <i data-lucide="key-round" class="w-4 h-4"></i>
+          <span>Simpan Kata Sandi &amp; Masuk</span>
+        </button>
+
+        <button
+          type="button"
+          id="auth-setpass-cancel-btn"
+          onclick="cancelPendingPasswordFlow()"
+          class="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition cursor-pointer"
+        >
+          <span>Kembali ke Halaman Login</span>
+        </button>
+      </form>
+
+      <!-- Form Ubah Kata Sandi Mandiri (Saat Sudah Login) -->
+      <form id="auth-changepass-form" onsubmit="handleChangePasswordSubmit(event)" class="hidden space-y-3.5">
+        <div id="auth-changepass-email" class="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold truncate">
+          Akun aktif
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-changepass-current" class="block text-xs font-bold text-slate-700">Kata Sandi Saat Ini</label>
+          <input
+            type="password"
+            id="auth-changepass-current"
+            required
+            autocomplete="current-password"
+            placeholder="Masukkan kata sandi lama"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-changepass-new" class="block text-xs font-bold text-slate-700">Kata Sandi Baru (min. 6 karakter)</label>
+          <input
+            type="password"
+            id="auth-changepass-new"
+            required
+            minlength="6"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div class="space-y-1">
+          <label for="auth-changepass-confirm" class="block text-xs font-bold text-slate-700">Konfirmasi Kata Sandi Baru</label>
+          <input
+            type="password"
+            id="auth-changepass-confirm"
+            required
+            minlength="6"
+            autocomplete="new-password"
+            placeholder="••••••••"
+            class="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+
+        <div id="auth-changepass-error" role="alert" aria-live="polite" class="hidden p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium"></div>
+
+        <button
+          type="submit"
+          id="auth-changepass-submit-btn"
+          class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+        >
+          <i data-lucide="save" class="w-4 h-4"></i>
+          <span>Perbarui Kata Sandi</span>
+        </button>
+
+        <button
+          type="button"
+          id="auth-changepass-cancel-btn"
+          onclick="closeChangePasswordModal()"
+          class="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition cursor-pointer"
+        >
+          <span>Batal</span>
+        </button>
+      </form>
+
+      <!-- Panel Error Tautan Email Kedaluwarsa / Tidak Valid -->
+      <div id="auth-link-error-panel" class="hidden space-y-3.5">
+        <div id="auth-link-error-message" role="alert" class="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium leading-relaxed">
+          Tautan aktivasi atau reset kata sandi sudah kedaluwarsa atau pernah digunakan.
+        </div>
+
+        <button
+          type="button"
+          id="auth-link-error-retry-btn"
+          onclick="setAuthModalView('forgot')"
+          class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-2xs transition cursor-pointer"
+        >
+          <i data-lucide="mail" class="w-4 h-4"></i>
+          <span>Minta Tautan Reset Baru</span>
+        </button>
+
+        <button
+          type="button"
+          id="auth-link-error-login-btn"
+          onclick="dismissAuthLinkError()"
+          class="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition cursor-pointer"
+        >
+          <span>Kembali ke Halaman Login</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -12519,7 +12729,151 @@ const INDONESIA_REGIONS = {
       return true;
     }
 
+    let _pendingAuthLinkFlow = null;
+    let _authModalView = 'login';
+
+    function getAuthRedirectUrl() {
+      if (typeof window !== 'undefined' && window.location && /^https?:/i.test(String(window.location.protocol || ''))) {
+        return `${window.location.origin}/dispatch-console`;
+      }
+      return '';
+    }
+
+    function isSyntheticLocalEmail(email) {
+      return /\.local$/i.test(String(email || '').trim());
+    }
+
+    function mapAuthCallbackErrorMessage(rawError, errorCode) {
+      const code = String(errorCode || '').trim().toLowerCase();
+      const desc = String(rawError || '').trim();
+      if (code === 'otp_expired' || /expired|invalid|already.*used|token/i.test(desc)) {
+        return 'Tautan aktivasi atau reset kata sandi sudah kedaluwarsa atau pernah digunakan. Silakan minta tautan reset baru atau hubungi Admin untuk Kirim Ulang Undangan.';
+      }
+      if (/access_denied/i.test(code) || /access_denied/i.test(desc)) {
+        return 'Akses tautan verifikasi ditolak atau tidak valid. Silakan minta tautan baru.';
+      }
+      return desc || 'Tautan autentikasi tidak valid atau sudah kedaluwarsa.';
+    }
+
+    function parseAuthCallbackFromUrl() {
+      if (typeof window === 'undefined' || !window.location) return null;
+      try {
+        const rawHash = String(window.location.hash || '').replace(/^#/, '');
+        const rawSearch = String(window.location.search || '').replace(/^\?/, '');
+        if (!rawHash && !rawSearch) return null;
+
+        const hashParams = new URLSearchParams(rawHash);
+        const searchParams = new URLSearchParams(rawSearch);
+        const readParam = (k) => hashParams.get(k) || searchParams.get(k) || '';
+
+        const errCode = readParam('error_code');
+        const errParam = readParam('error');
+        const errDesc = readParam('error_description');
+        const accessToken = hashParams.get('access_token') || '';
+        const refreshToken = hashParams.get('refresh_token') || '';
+        const tokenHash = readParam('token_hash');
+        const rawType = String(readParam('type') || '').trim().toLowerCase();
+
+        const isKnownAuthType = ['recovery', 'invite', 'signup', 'magiclink', 'email'].includes(rawType);
+        const hasAuthError = Boolean(errCode || errParam || errDesc);
+        if (!hasAuthError && !accessToken && !(tokenHash && isKnownAuthType)) {
+          return null;
+        }
+
+        // Bersihkan token sensitif / error callback dari address bar segera
+        if (window.history && typeof window.history.replaceState === 'function') {
+          const cleanSearchParams = new URLSearchParams(rawSearch);
+          ['token_hash', 'type', 'error', 'error_code', 'error_description', 'code'].forEach((k) => cleanSearchParams.delete(k));
+          const cleanQuery = cleanSearchParams.toString();
+          const cleanUrl = `${window.location.pathname || '/dispatch-console'}${cleanQuery ? `?${cleanQuery}` : ''}`;
+          try {
+            window.history.replaceState(null, '', cleanUrl);
+          } catch (histErr) {}
+        }
+
+        if (hasAuthError) {
+          _pendingAuthLinkFlow = {
+            flowType: 'link_error',
+            accessToken: '',
+            refreshToken: '',
+            tokenHash: '',
+            rawType,
+            email: '',
+            errorMessage: mapAuthCallbackErrorMessage(errDesc || errParam, errCode),
+          };
+          return _pendingAuthLinkFlow;
+        }
+
+        if (accessToken && (isKnownAuthType || !rawType)) {
+          const claims = parseJwtPayload(accessToken) || {};
+          const flowType = rawType === 'invite' ? 'invite' : 'recovery';
+          _pendingAuthLinkFlow = {
+            flowType,
+            accessToken,
+            refreshToken,
+            tokenHash: '',
+            rawType: rawType || flowType,
+            email: String(claims.email || '').trim(),
+            errorMessage: '',
+          };
+          verifyPendingAuthCallbackToken().catch(() => {});
+          return _pendingAuthLinkFlow;
+        }
+
+        if (tokenHash && isKnownAuthType) {
+          const flowType = rawType === 'invite' ? 'invite' : 'recovery';
+          _pendingAuthLinkFlow = {
+            flowType,
+            accessToken: '',
+            refreshToken: '',
+            tokenHash,
+            rawType,
+            email: '',
+            errorMessage: '',
+          };
+          return _pendingAuthLinkFlow;
+        }
+      } catch (e) {
+        console.warn('parseAuthCallbackFromUrl warning:', e);
+      }
+      return null;
+    }
+
+    async function verifyPendingAuthCallbackToken() {
+      if (!_pendingAuthLinkFlow || !_pendingAuthLinkFlow.accessToken) return;
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) return;
+      try {
+        const res = await fetchWithTimeout(`${url}/auth/v1/user`, {
+          method: 'GET',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${_pendingAuthLinkFlow.accessToken}`,
+          },
+        }, 8000);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || !data.id) {
+          _pendingAuthLinkFlow = {
+            flowType: 'link_error',
+            accessToken: '',
+            refreshToken: '',
+            tokenHash: '',
+            rawType: _pendingAuthLinkFlow.rawType || '',
+            email: '',
+            errorMessage: mapAuthCallbackErrorMessage(data && (data.msg || data.message || data.error_description), 'otp_expired'),
+          };
+          if (typeof syncSupabaseLoginGate === 'function') syncSupabaseLoginGate();
+          return;
+        }
+        if (data.email && _pendingAuthLinkFlow) {
+          _pendingAuthLinkFlow.email = String(data.email).trim();
+          updatePendingSetPasswordContextUI();
+        }
+      } catch (e) {}
+    }
+
     function isCloudAuthGateRequired() {
+      if (_pendingAuthLinkFlow) return true;
       if (typeof state !== 'undefined' && state.isPublicKioskMode) return false;
       const cfg = (typeof getSupabaseConfig === 'function') ? getSupabaseConfig() : { url: '', key: '' };
       const url = String((cfg && cfg.url) || '').trim();
@@ -12849,10 +13203,114 @@ const INDONESIA_REGIONS = {
       }
     }
 
+    function updatePendingSetPasswordContextUI() {
+      const ctxEl = document.getElementById('auth-setpass-context');
+      if (!ctxEl || !_pendingAuthLinkFlow) return;
+      const isInvite = _pendingAuthLinkFlow.flowType === 'invite';
+      const emailPart = _pendingAuthLinkFlow.email ? ` untuk akun ${escapeHtml(_pendingAuthLinkFlow.email)}` : '';
+      ctxEl.innerHTML = isInvite
+        ? `<strong>Aktivasi Akun Petugas:</strong> Buat kata sandi baru${emailPart} agar akun siap digunakan login.`
+        : `<strong>Atur Ulang Kata Sandi:</strong> Buat kata sandi baru${emailPart} untuk menggantikan kata sandi lama Anda.`;
+    }
+
+    function setAuthModalView(viewName, options = {}) {
+      const allowedViews = ['login', 'forgot', 'set-password', 'change-password', 'link-error'];
+      const targetView = allowedViews.includes(viewName) ? viewName : 'login';
+      _authModalView = targetView;
+
+      const panels = {
+        'login': 'auth-login-form',
+        'forgot': 'auth-forgot-form',
+        'set-password': 'auth-setpass-form',
+        'change-password': 'auth-changepass-form',
+        'link-error': 'auth-link-error-panel',
+      };
+      Object.entries(panels).forEach(([key, elId]) => {
+        const el = document.getElementById(elId);
+        if (el) el.classList.toggle('hidden', key !== targetView);
+      });
+
+      const titleEl = document.getElementById('modal-auth-login-title');
+      const subtitleEl = document.getElementById('auth-login-subtitle');
+      const gateMode = Boolean(options.gateMode !== undefined ? options.gateMode : isCloudAuthGateRequired());
+      const closeBtn = document.getElementById('auth-login-close-btn');
+
+      if (targetView === 'forgot') {
+        if (titleEl) titleEl.textContent = 'Lupa Kata Sandi';
+        if (subtitleEl) subtitleEl.textContent = 'Pemulihan akun petugas melalui email aktif';
+        const loginEmail = (document.getElementById('auth-email-input')?.value || '').trim();
+        const forgotEmailEl = document.getElementById('auth-forgot-email');
+        if (forgotEmailEl && !forgotEmailEl.value && loginEmail) forgotEmailEl.value = loginEmail;
+        const statusEl = document.getElementById('auth-forgot-status');
+        if (statusEl) {
+          statusEl.textContent = '';
+          statusEl.className = 'hidden p-2.5 rounded-xl text-xs font-medium';
+        }
+        if (closeBtn) closeBtn.classList.toggle('hidden', gateMode);
+        if (forgotEmailEl) setTimeout(() => forgotEmailEl.focus(), 100);
+      } else if (targetView === 'set-password') {
+        const isInvite = _pendingAuthLinkFlow && _pendingAuthLinkFlow.flowType === 'invite';
+        if (titleEl) titleEl.textContent = isInvite ? 'Aktivasi Akun Baru' : 'Buat Kata Sandi Baru';
+        if (subtitleEl) subtitleEl.textContent = isInvite ? 'Lengkapi kata sandi untuk mengaktifkan akun' : 'Pemulihan kata sandi petugas';
+        updatePendingSetPasswordContextUI();
+        const errBox = document.getElementById('auth-setpass-error');
+        if (errBox) {
+          errBox.textContent = '';
+          errBox.classList.add('hidden');
+        }
+        if (closeBtn) closeBtn.classList.add('hidden');
+        const newPassEl = document.getElementById('auth-setpass-new');
+        if (newPassEl) setTimeout(() => newPassEl.focus(), 100);
+      } else if (targetView === 'change-password') {
+        const session = getAuthSession();
+        if (titleEl) titleEl.textContent = 'Ubah Kata Sandi';
+        if (subtitleEl) subtitleEl.textContent = 'Pembaruan kata sandi akun aktif secara mandiri';
+        const emailLabel = document.getElementById('auth-changepass-email');
+        if (emailLabel) {
+          emailLabel.textContent = session && session.email ? `Akun: ${session.email}` : 'Akun aktif';
+        }
+        ['auth-changepass-current', 'auth-changepass-new', 'auth-changepass-confirm'].forEach((id) => {
+          const inp = document.getElementById(id);
+          if (inp) inp.value = '';
+        });
+        const errBox = document.getElementById('auth-changepass-error');
+        if (errBox) {
+          errBox.textContent = '';
+          errBox.classList.add('hidden');
+        }
+        if (closeBtn) closeBtn.classList.remove('hidden');
+        const curEl = document.getElementById('auth-changepass-current');
+        if (curEl) setTimeout(() => curEl.focus(), 100);
+      } else if (targetView === 'link-error') {
+        if (titleEl) titleEl.textContent = 'Tautan Tidak Berlaku';
+        if (subtitleEl) subtitleEl.textContent = 'Aktivasi / Reset Kata Sandi';
+        const msgEl = document.getElementById('auth-link-error-message');
+        if (msgEl) {
+          msgEl.textContent = (_pendingAuthLinkFlow && _pendingAuthLinkFlow.errorMessage)
+            || 'Tautan aktivasi atau reset kata sandi sudah kedaluwarsa atau pernah digunakan.';
+        }
+        if (closeBtn) closeBtn.classList.add('hidden');
+      } else {
+        if (titleEl) titleEl.textContent = 'Login Petugas';
+        if (subtitleEl) subtitleEl.textContent = gateMode ? 'Masuk akun petugas untuk membuka dashboard' : 'Supabase Auth Session';
+        const errBox = document.getElementById('auth-login-error');
+        if (errBox) {
+          errBox.textContent = '';
+          errBox.classList.add('hidden');
+        }
+        if (closeBtn) closeBtn.classList.toggle('hidden', gateMode);
+        const emailEl = document.getElementById('auth-email-input');
+        if (emailEl) setTimeout(() => emailEl.focus(), 100);
+      }
+
+      safeCreateIcons();
+    }
+
     function openLoginModal(options = {}) {
       const modal = document.getElementById('modal-auth-login');
       if (!modal) return;
-      const gateMode = Boolean((options && options.gateMode) || isCloudAuthGateRequired());
+      const isChangePassView = options && options.view === 'change-password';
+      const gateMode = isChangePassView ? false : Boolean((options && options.gateMode) || isCloudAuthGateRequired());
 
       if (gateMode) {
         modal.classList.remove('bg-slate-900/60', 'backdrop-blur-xs');
@@ -12862,31 +13320,21 @@ const INDONESIA_REGIONS = {
         modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
       }
 
-      const closeBtn = document.getElementById('auth-login-close-btn');
-      if (closeBtn) closeBtn.classList.toggle('hidden', gateMode);
-
-      const subtitleEl = document.getElementById('auth-login-subtitle');
-      if (subtitleEl) {
-        subtitleEl.textContent = gateMode ? 'Masuk akun petugas untuk membuka dashboard' : 'Supabase Auth Session';
-      }
-
-      const errBox = document.getElementById('auth-login-error');
-      if (errBox) {
-        errBox.textContent = '';
-        errBox.classList.add('hidden');
-      }
       const passInp = document.getElementById('auth-password-input');
       if (gateMode && passInp) passInp.value = '';
 
+      let targetView = (options && options.view) || 'login';
+      if (!isChangePassView && _pendingAuthLinkFlow) {
+        targetView = _pendingAuthLinkFlow.flowType === 'link_error' ? 'link-error' : 'set-password';
+      }
+
       modal.classList.remove('hidden');
       setDashboardLockState(gateMode);
-      const emailInp = document.getElementById('auth-email-input');
-      if (emailInp) setTimeout(() => emailInp.focus(), 150);
-      safeCreateIcons();
+      setAuthModalView(targetView, { gateMode });
     }
 
     function closeLoginModal() {
-      if (isCloudAuthGateRequired()) {
+      if (_authModalView !== 'change-password' && isCloudAuthGateRequired()) {
         setDashboardLockState(true);
         return;
       }
@@ -12898,8 +13346,352 @@ const INDONESIA_REGIONS = {
         modal.classList.remove('bg-slate-950/95', 'bg-gradient-to-br', 'from-slate-950', 'via-slate-900', 'to-emerald-950', 'backdrop-blur-md');
         modal.classList.add('bg-slate-900/60', 'backdrop-blur-xs');
       }
+      _authModalView = 'login';
       const closeBtn = document.getElementById('auth-login-close-btn');
       if (closeBtn) closeBtn.classList.remove('hidden');
+    }
+
+    function cancelPendingPasswordFlow() {
+      _pendingAuthLinkFlow = null;
+      if (isCloudAuthGateRequired()) {
+        setAuthModalView('login', { gateMode: true });
+      } else {
+        closeLoginModal();
+      }
+    }
+
+    function dismissAuthLinkError() {
+      _pendingAuthLinkFlow = null;
+      if (isCloudAuthGateRequired()) {
+        setAuthModalView('login', { gateMode: true });
+      } else {
+        closeLoginModal();
+      }
+    }
+
+    function openChangePasswordModal() {
+      const session = getAuthSession();
+      if (!session || !session.access_token || !isCloudModeActive()) {
+        showToast('Fitur ubah kata sandi hanya tersedia setelah login pada mode cloud.', 'warning');
+        return;
+      }
+      openLoginModal({ view: 'change-password', gateMode: false });
+    }
+
+    function closeChangePasswordModal() {
+      closeLoginModal();
+      if (isCloudAuthGateRequired()) {
+        syncSupabaseLoginGate();
+      }
+    }
+
+    async function handleForgotPasswordSubmit(e) {
+      if (e) e.preventDefault();
+      const emailEl = document.getElementById('auth-forgot-email');
+      const statusEl = document.getElementById('auth-forgot-status');
+      const submitBtn = document.getElementById('auth-forgot-submit-btn');
+
+      const setForgotBanner = (msg, kind = 'info') => {
+        if (!statusEl) return;
+        const styles = {
+          error: 'p-2.5 rounded-xl text-xs font-medium bg-rose-50 border border-rose-200 text-rose-700',
+          success: 'p-2.5 rounded-xl text-xs font-medium bg-emerald-50 border border-emerald-200 text-emerald-700',
+          info: 'p-2.5 rounded-xl text-xs font-medium bg-sky-50 border border-sky-200 text-sky-700',
+        };
+        statusEl.className = styles[kind] || styles.info;
+        statusEl.textContent = msg;
+      };
+
+      const email = String(emailEl ? emailEl.value : '').trim().toLowerCase();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        setForgotBanner('Harap masukkan alamat email yang valid.', 'error');
+        return;
+      }
+      if (isSyntheticLocalEmail(email)) {
+        setForgotBanner('Akun berdomain .local tidak memiliki inbox email. Hubungi Admin untuk mengatur akun dengan email aktif.', 'error');
+        return;
+      }
+
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        setForgotBanner('Konfigurasi Supabase cloud belum aktif pada perangkat ini.', 'error');
+        return;
+      }
+
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Mengirim...</span>`;
+        safeCreateIcons();
+      }
+
+      try {
+        const redirectTo = getAuthRedirectUrl();
+        const endpoint = `${url}/auth/v1/recover${redirectTo ? `?redirect_to=${encodeURIComponent(redirectTo)}` : ''}`;
+        const res = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          headers: {
+            'apikey': key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email }),
+        }, 10000);
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const rawMsg = data.error_description || data.message || data.msg || `Permintaan gagal (HTTP ${res.status})`;
+          if (res.status === 429 || /rate limit|too many/i.test(rawMsg)) {
+            throw new Error('Terlalu banyak permintaan reset email dalam waktu singkat. Coba lagi beberapa menit lagi.');
+          }
+          throw new Error(rawMsg);
+        }
+
+        _pendingAuthLinkFlow = null;
+        setForgotBanner(
+          'Jika email terdaftar dan sudah aktif, tautan reset kata sandi telah dikirim ke kotak masuk atau folder spam Anda.',
+          'success'
+        );
+        showToast('Permintaan reset kata sandi dikirim. Silakan cek email Anda.', 'success');
+      } catch (err) {
+        console.warn('Forgot password failure:', err);
+        setForgotBanner(err && err.message ? err.message : 'Gagal mengirim email reset kata sandi.', 'error');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<i data-lucide="mail" class="w-4 h-4"></i><span>Kirim Tautan Reset Sandi</span>`;
+          safeCreateIcons();
+        }
+      }
+    }
+
+    async function handleSetPasswordSubmit(e) {
+      if (e) e.preventDefault();
+      if (!_pendingAuthLinkFlow) {
+        setAuthModalView('login');
+        return;
+      }
+
+      const newEl = document.getElementById('auth-setpass-new');
+      const confEl = document.getElementById('auth-setpass-confirm');
+      const errBox = document.getElementById('auth-setpass-error');
+      const submitBtn = document.getElementById('auth-setpass-submit-btn');
+
+      const showSetErr = (msg) => {
+        if (!errBox) return;
+        errBox.textContent = msg;
+        errBox.classList.toggle('hidden', !msg);
+      };
+
+      const newPass = String(newEl ? newEl.value : '');
+      const confirmPass = String(confEl ? confEl.value : '');
+      if (newPass.length < 6) {
+        showSetErr('Kata sandi baru minimal 6 karakter.');
+        return;
+      }
+      if (newPass !== confirmPass) {
+        showSetErr('Konfirmasi kata sandi baru tidak cocok.');
+        return;
+      }
+
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        showSetErr('Konfigurasi Supabase cloud belum tersedia.');
+        return;
+      }
+
+      showSetErr('');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Menyimpan...</span>`;
+        safeCreateIcons();
+      }
+
+      try {
+        let accessToken = _pendingAuthLinkFlow.accessToken || '';
+        let knownEmail = _pendingAuthLinkFlow.email || '';
+
+        if (!accessToken && _pendingAuthLinkFlow.tokenHash) {
+          const verifyRes = await fetchWithTimeout(`${url}/auth/v1/verify`, {
+            method: 'POST',
+            headers: {
+              'apikey': key,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              type: _pendingAuthLinkFlow.rawType || _pendingAuthLinkFlow.flowType || 'recovery',
+              token_hash: _pendingAuthLinkFlow.tokenHash,
+            }),
+          }, 10000);
+          const verifyData = await verifyRes.json().catch(() => ({}));
+          if (!verifyRes.ok || !verifyData.access_token) {
+            const errMsg = verifyData.error_description || verifyData.message || verifyData.msg || 'Token tautan sudah kedaluwarsa atau pernah dipakai.';
+            throw new Error(errMsg);
+          }
+          accessToken = verifyData.access_token;
+          knownEmail = (verifyData.user && verifyData.user.email) || knownEmail;
+        }
+
+        if (!accessToken) {
+          throw new Error('Sesi tautan aktivasi/reset tidak valid atau sudah kedaluwarsa.');
+        }
+
+        const updateRes = await fetchWithTimeout(`${url}/auth/v1/user`, {
+          method: 'PUT',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password: newPass }),
+        }, 10000);
+        const updateData = await updateRes.json().catch(() => ({}));
+        if (!updateRes.ok) {
+          const errMsg = updateData.error_description || updateData.message || updateData.msg || `Gagal menyimpan kata sandi (HTTP ${updateRes.status})`;
+          throw new Error(errMsg);
+        }
+
+        const finalEmail = String((updateData && updateData.email) || (updateData && updateData.user && updateData.user.email) || knownEmail || '').trim();
+        const wasInvite = _pendingAuthLinkFlow.flowType === 'invite';
+        _pendingAuthLinkFlow = null;
+        if (newEl) newEl.value = '';
+        if (confEl) confEl.value = '';
+
+        if (finalEmail) {
+          try {
+            await loginWithSupabase(finalEmail, newPass, true);
+            showToast(
+              wasInvite ? `Akun ${finalEmail} aktif dan berhasil masuk.` : `Kata sandi ${finalEmail} berhasil diperbarui.`,
+              'success'
+            );
+            return;
+          } catch (reloginErr) {
+            const loginEmailEl = document.getElementById('auth-email-input');
+            if (loginEmailEl) loginEmailEl.value = finalEmail;
+          }
+        }
+
+        showToast('Kata sandi baru berhasil disimpan. Silakan login.', 'success');
+        setAuthModalView('login', { gateMode: isCloudAuthGateRequired() });
+      } catch (err) {
+        console.warn('Set password failure:', err);
+        showSetErr(err && err.message ? err.message : 'Gagal menyimpan kata sandi baru.');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<i data-lucide="key-round" class="w-4 h-4"></i><span>Simpan Kata Sandi &amp; Masuk</span>`;
+          safeCreateIcons();
+        }
+      }
+    }
+
+    async function handleChangePasswordSubmit(e) {
+      if (e) e.preventDefault();
+      const session = getAuthSession();
+      if (!session || !session.email || !session.access_token) {
+        showToast('Sesi login tidak ditemukan. Silakan login ulang.', 'error');
+        closeChangePasswordModal();
+        return;
+      }
+
+      const curEl = document.getElementById('auth-changepass-current');
+      const newEl = document.getElementById('auth-changepass-new');
+      const confEl = document.getElementById('auth-changepass-confirm');
+      const errBox = document.getElementById('auth-changepass-error');
+      const submitBtn = document.getElementById('auth-changepass-submit-btn');
+
+      const showErr = (msg) => {
+        if (!errBox) return;
+        errBox.textContent = msg;
+        errBox.classList.toggle('hidden', !msg);
+      };
+
+      const currentPass = String(curEl ? curEl.value : '');
+      const newPass = String(newEl ? newEl.value : '');
+      const confirmPass = String(confEl ? confEl.value : '');
+
+      if (!currentPass) {
+        showErr('Harap masukkan kata sandi saat ini untuk verifikasi.');
+        return;
+      }
+      if (newPass.length < 6) {
+        showErr('Kata sandi baru minimal 6 karakter.');
+        return;
+      }
+      if (newPass === currentPass) {
+        showErr('Kata sandi baru tidak boleh sama dengan kata sandi saat ini.');
+        return;
+      }
+      if (newPass !== confirmPass) {
+        showErr('Konfirmasi kata sandi baru tidak cocok.');
+        return;
+      }
+
+      const { url, key } = getSupabaseConfig();
+      if (!url || !key) {
+        showErr('Konfigurasi cloud Supabase tidak ditemukan.');
+        return;
+      }
+
+      showErr('');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i><span>Memperbarui...</span>`;
+        safeCreateIcons();
+      }
+
+      try {
+        // 1. Verifikasi ulang kata sandi saat ini agar aman bila perangkat kasir sedang terbuka
+        const reauthRes = await fetchWithTimeout(`${url}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: {
+            'apikey': key,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: session.email, password: currentPass }),
+        }, 10000);
+        const reauthData = await reauthRes.json().catch(() => ({}));
+        if (!reauthRes.ok || !reauthData.access_token) {
+          throw new Error('Kata sandi saat ini salah.');
+        }
+
+        // 2. Simpan kata sandi baru menggunakan token terverifikasi
+        const updRes = await fetchWithTimeout(`${url}/auth/v1/user`, {
+          method: 'PUT',
+          headers: {
+            'apikey': key,
+            'Authorization': `Bearer ${reauthData.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ password: newPass }),
+        }, 10000);
+        const updData = await updRes.json().catch(() => ({}));
+        if (!updRes.ok) {
+          const msg = updData.error_description || updData.message || updData.msg || `Gagal memperbarui kata sandi (HTTP ${updRes.status})`;
+          throw new Error(msg);
+        }
+
+        const updatedSession = {
+          ...session,
+          access_token: reauthData.access_token,
+          refresh_token: reauthData.refresh_token || session.refresh_token,
+          expires_at: reauthData.expires_at ? reauthData.expires_at * 1000 : (Date.now() + (reauthData.expires_in || 3600) * 1000),
+          remember: session.remember === true,
+        };
+        saveAuthSession(updatedSession, session.remember === true);
+        if (curEl) curEl.value = '';
+        if (newEl) newEl.value = '';
+        if (confEl) confEl.value = '';
+        closeChangePasswordModal();
+        showToast('Kata sandi akun berhasil diperbarui.', 'success');
+      } catch (err) {
+        console.warn('Change password failure:', err);
+        showErr(err && err.message ? err.message : 'Gagal memperbarui kata sandi.');
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = `<i data-lucide="save" class="w-4 h-4"></i><span>Perbarui Kata Sandi</span>`;
+          safeCreateIcons();
+        }
+      }
     }
 
     async function handleAuthLoginSubmit(e) {
@@ -12970,6 +13762,16 @@ const INDONESIA_REGIONS = {
               <span class="max-w-[120px] truncate hidden md:inline">${escapeHtml(emailPrefix)}</span>
               <span class="px-1 py-0.2 rounded-md bg-white/70 text-[10px] uppercase font-mono tracking-tight">${escapeHtml(roleLabel)}</span>
             </div>
+            <button
+              type="button"
+              id="btn-header-change-password"
+              onclick="openChangePasswordModal()"
+              title="Ubah Kata Sandi Akun (${escapeHtml(session.email)})"
+              class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-300 shadow-2xs transition cursor-pointer"
+            >
+              <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
+              <span class="hidden xl:inline">Sandi</span>
+            </button>
             <button
               type="button"
               onclick="logoutSupabase(true)"
@@ -13556,6 +14358,9 @@ const INDONESIA_REGIONS = {
         return;
       }
 
+      if (_pendingAuthLinkFlow) {
+        return;
+      }
       const session = getAuthSession();
       if (!session || !session.access_token || !session.role || !VALID_OPERATIONAL_ROLES.includes(session.role)) {
         updateCloudStatusUI('offline', 'Login petugas diperlukan untuk sinkronisasi cloud.');
@@ -14451,13 +15256,43 @@ const INDONESIA_REGIONS = {
       box.textContent = message;
     }
 
+    function acctMgmtToggleCreateMode() {
+      const manualChk = document.getElementById('acct-mgmt-manual-mode');
+      const isManual = Boolean(manualChk && manualChk.checked);
+      const emailCol = document.getElementById('acct-mgmt-email-col');
+      const passCol = document.getElementById('acct-mgmt-password-col');
+      const passEl = document.getElementById('acct-mgmt-password');
+      const submitCol = document.getElementById('acct-mgmt-submit-col');
+      const submitBtn = document.getElementById('acct-mgmt-submit-btn');
+      const hintEl = document.getElementById('acct-mgmt-mode-hint');
+
+      if (emailCol) emailCol.className = isManual ? 'sm:col-span-4' : 'sm:col-span-6';
+      if (passCol) passCol.classList.toggle('hidden', !isManual);
+      if (passEl) {
+        passEl.required = isManual;
+        if (!isManual) passEl.value = '';
+      }
+      if (submitCol) submitCol.className = isManual ? 'sm:col-span-2' : 'sm:col-span-3';
+      if (submitBtn) {
+        submitBtn.innerHTML = isManual
+          ? '<i data-lucide="user-plus" class="w-3.5 h-3.5"></i><span>Buat Akun</span>'
+          : '<i data-lucide="mail-plus" class="w-3.5 h-3.5"></i><span>Kirim Undangan</span>';
+      }
+      if (hintEl) {
+        hintEl.textContent = isManual
+          ? 'Akun langsung aktif memakai kata sandi awal yang Anda tentukan.'
+          : 'Petugas akan menerima email tautan aktivasi untuk membuat kata sandi sendiri.';
+      }
+      safeCreateIcons();
+    }
+
     function acctMgmtRenderTable(users) {
       const tbody = document.getElementById('acct-mgmt-tbody');
       if (!tbody) return;
 
       const list = Array.isArray(users) ? users : [];
       if (list.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" class="py-4 px-3.5 text-center text-slate-400">Belum ada akun petugas.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="py-4 px-3.5 text-center text-slate-400">Belum ada akun petugas.</td></tr>';
         return;
       }
 
@@ -14473,9 +15308,24 @@ const INDONESIA_REGIONS = {
         const isSelf = Boolean(currentUid && u.id && String(u.id) === currentUid);
         const roleName = u.role || 'NO ROLE';
         const badgeCls = roleBadges[roleName] || 'bg-slate-100 text-slate-700 border-slate-300';
-        const actionHtml = isSelf
-          ? `<button type="button" disabled title="Akun sendiri tidak dapat dihapus" aria-disabled="true" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 text-slate-400 font-semibold text-xs opacity-60 cursor-not-allowed">Hapus</button>`
-          : `<button type="button" data-user-id="${escapeHtml(u.id)}" data-user-email="${escapeHtml(u.email)}" onclick="acctMgmtConfirmDeleteUser(this.dataset.userId, this.dataset.userEmail)" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs transition cursor-pointer">Hapus</button>`;
+        const isActive = u.is_active !== undefined ? Boolean(u.is_active) : Boolean(u.email_confirmed_at);
+        const isLocalEmail = isSyntheticLocalEmail(u.email);
+
+        const statusBadge = isActive
+          ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">Aktif</span>'
+          : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">Menunggu Aktivasi</span>';
+
+        const emailActionBtn = !isActive
+          ? (isLocalEmail
+            ? `<button type="button" disabled title="Domain .local tidak dapat menerima email aktivasi" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-slate-400 font-semibold text-xs opacity-60 cursor-not-allowed">Kirim Ulang</button>`
+            : `<button type="button" data-user-id="${escapeHtml(u.id)}" data-user-email="${escapeHtml(u.email)}" onclick="acctMgmtResendInvite(this.dataset.userId, this.dataset.userEmail)" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 font-semibold text-xs transition cursor-pointer">Kirim Ulang</button>`)
+          : (isLocalEmail
+            ? `<button type="button" disabled title="Akun .local tidak dapat menerima email reset password" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-slate-400 font-semibold text-xs opacity-60 cursor-not-allowed">Reset Sandi</button>`
+            : `<button type="button" data-user-id="${escapeHtml(u.id)}" data-user-email="${escapeHtml(u.email)}" onclick="acctMgmtSendReset(this.dataset.userId, this.dataset.userEmail)" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-semibold text-xs transition cursor-pointer">Reset Sandi</button>`);
+
+        const deleteBtn = isSelf
+          ? `<button type="button" disabled title="Akun sendiri tidak dapat dihapus" aria-disabled="true" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-100 text-slate-400 font-semibold text-xs opacity-60 cursor-not-allowed">Hapus</button>`
+          : `<button type="button" data-user-id="${escapeHtml(u.id)}" data-user-email="${escapeHtml(u.email)}" onclick="acctMgmtConfirmDeleteUser(this.dataset.userId, this.dataset.userEmail)" class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs transition cursor-pointer">Hapus</button>`;
 
         return `
           <tr class="hover:bg-slate-50 transition">
@@ -14486,7 +15336,10 @@ const INDONESIA_REGIONS = {
             <td class="py-2.5 px-3.5 whitespace-nowrap">
               <span class="inline-flex items-center px-2 py-0.5 rounded-md border text-[11px] font-mono font-bold ${badgeCls}">${escapeHtml(roleName)}</span>
             </td>
-            <td class="py-2.5 px-3.5 text-right whitespace-nowrap">${actionHtml}</td>
+            <td class="py-2.5 px-3.5 whitespace-nowrap">${statusBadge}</td>
+            <td class="py-2.5 px-3.5 text-right whitespace-nowrap">
+              <div class="inline-flex items-center justify-end gap-1.5">${emailActionBtn}${deleteBtn}</div>
+            </td>
           </tr>
         `;
       }).join('');
@@ -14550,7 +15403,7 @@ const INDONESIA_REGIONS = {
         acctMgmtSetStatus(msg, 'error');
         const tbody = document.getElementById('acct-mgmt-tbody');
         if (tbody) {
-          tbody.innerHTML = `<tr><td colspan="3" class="py-4 px-3.5 text-center text-rose-600">${escapeHtml(msg)}</td></tr>`;
+          tbody.innerHTML = `<tr><td colspan="4" class="py-4 px-3.5 text-center text-rose-600">${escapeHtml(msg)}</td></tr>`;
         }
         showToast(msg, 'error');
       } finally {
@@ -14568,8 +15421,10 @@ const INDONESIA_REGIONS = {
       const emailEl = document.getElementById('acct-mgmt-email');
       const passEl = document.getElementById('acct-mgmt-password');
       const roleEl = document.getElementById('acct-mgmt-role');
+      const manualEl = document.getElementById('acct-mgmt-manual-mode');
       const submitBtn = document.getElementById('acct-mgmt-submit-btn');
 
+      const isManual = Boolean(manualEl && manualEl.checked);
       const email = String(emailEl ? emailEl.value : '').trim().toLowerCase();
       const password = String(passEl ? passEl.value : '');
       const role = String(roleEl ? roleEl.value : '').trim().toLowerCase();
@@ -14578,7 +15433,13 @@ const INDONESIA_REGIONS = {
         showToast('Format email petugas tidak valid.', 'error');
         return;
       }
-      if (password.length < 6) {
+      if (!isManual && isSyntheticLocalEmail(email)) {
+        const msg = 'Domain .local tidak bisa menerima email undangan. Pakai email aktif atau centang mode kata sandi awal manual.';
+        acctMgmtSetStatus(msg, 'error');
+        showToast(msg, 'error');
+        return;
+      }
+      if (isManual && password.length < 6) {
         showToast('Kata sandi minimal 6 karakter.', 'error');
         return;
       }
@@ -14589,16 +15450,24 @@ const INDONESIA_REGIONS = {
 
       if (submitBtn) {
         submitBtn.disabled = true;
-        submitBtn.textContent = 'Membuat...';
+        submitBtn.textContent = isManual ? 'Membuat...' : 'Mengirim...';
       }
       acctMgmtSetStatus('');
 
       try {
-        await acctMgmtRequest('POST', { email, password, role });
+        const payload = isManual
+          ? { action: 'create', mode: 'manual', email, password, role }
+          : { action: 'create', mode: 'invite', email, role, redirect_to: getAuthRedirectUrl() };
+        const resData = await acctMgmtRequest('POST', payload);
         if (emailEl) emailEl.value = '';
         if (passEl) passEl.value = '';
         if (roleEl) roleEl.value = 'cashier';
-        showToast(`Akun ${email} (${role}) berhasil dibuat.`, 'success');
+        const okMsg = resData.message
+          || (isManual
+            ? `Akun ${email} (${role}) berhasil dibuat.`
+            : `Undangan aktivasi akun telah dikirim ke ${email} (${role}).`);
+        acctMgmtSetStatus(okMsg, 'success');
+        showToast(okMsg, 'success');
         await acctMgmtLoadUsers();
       } catch (err) {
         console.warn('acctMgmtHandleCreateSubmit failure:', err);
@@ -14608,9 +15477,52 @@ const INDONESIA_REGIONS = {
       } finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.innerHTML = '<i data-lucide="user-plus" class="w-3.5 h-3.5"></i><span>Buat Akun</span>';
-          safeCreateIcons();
+          acctMgmtToggleCreateMode();
         }
+      }
+    }
+
+    async function acctMgmtResendInvite(userId, email) {
+      if (!acctMgmtCanManage()) {
+        showToast('Akses ditolak: hanya role admin yang diizinkan.', 'error');
+        return;
+      }
+      acctMgmtSetStatus(`Mengirim ulang email undangan ke ${email || userId}...`, 'info');
+      try {
+        const data = await acctMgmtRequest('POST', {
+          action: 'resend_invite',
+          user_id: userId,
+          redirect_to: getAuthRedirectUrl(),
+        });
+        const msg = (data && data.message) || `Undangan dikirim ulang ke ${email || userId}.`;
+        acctMgmtSetStatus(msg, 'success');
+        showToast(msg, 'success');
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : 'Gagal mengirim ulang email undangan.';
+        acctMgmtSetStatus(msg, 'error');
+        showToast(msg, 'error');
+      }
+    }
+
+    async function acctMgmtSendReset(userId, email) {
+      if (!acctMgmtCanManage()) {
+        showToast('Akses ditolak: hanya role admin yang diizinkan.', 'error');
+        return;
+      }
+      acctMgmtSetStatus(`Mengirim tautan reset kata sandi ke ${email || userId}...`, 'info');
+      try {
+        const data = await acctMgmtRequest('POST', {
+          action: 'send_reset',
+          user_id: userId,
+          redirect_to: getAuthRedirectUrl(),
+        });
+        const msg = (data && data.message) || `Tautan reset kata sandi dikirim ke ${email || userId}.`;
+        acctMgmtSetStatus(msg, 'success');
+        showToast(msg, 'success');
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : 'Gagal mengirim tautan reset kata sandi.';
+        acctMgmtSetStatus(msg, 'error');
+        showToast(msg, 'error');
       }
     }
 
@@ -14657,6 +15569,7 @@ const INDONESIA_REGIONS = {
         return false;
       }
 
+      acctMgmtToggleCreateMode();
       if (options && options.loadIfVisible) {
         acctMgmtLoadUsers();
       }
@@ -14789,13 +15702,25 @@ const INDONESIA_REGIONS = {
       checkAuthGate,
       openLoginModal,
       closeLoginModal,
+      setAuthModalView,
       handleAuthLoginSubmit,
+      handleForgotPasswordSubmit,
+      handleSetPasswordSubmit,
+      cancelPendingPasswordFlow,
+      dismissAuthLinkError,
+      openChangePasswordModal,
+      closeChangePasswordModal,
+      handleChangePasswordSubmit,
+      parseAuthCallbackFromUrl,
       isCloudAuthGateRequired,
       syncSupabaseLoginGate,
       loginWithSupabase,
       logoutSupabase,
+      acctMgmtToggleCreateMode,
       acctMgmtHandleCreateSubmit,
       acctMgmtLoadUsers,
+      acctMgmtResendInvite,
+      acctMgmtSendReset,
       acctMgmtConfirmDeleteUser,
       acctMgmtSyncVisibility,
       acctMgmtCanManage,
@@ -15007,6 +15932,13 @@ const INDONESIA_REGIONS = {
       }
     }
     function bootstrapApp() {
+      // 0. Deteksi tautan email aktivasi / reset kata sandi sebelum Login Gate
+      try {
+        parseAuthCallbackFromUrl();
+      } catch (errCb) {
+        console.warn('Peringatan parseAuthCallbackFromUrl:', errCb);
+      }
+
       // 1. Inisialisasi sesi Auth & render header auth badge secara tahan error (prioritas utama)
       try {
         const session = getAuthSession();
