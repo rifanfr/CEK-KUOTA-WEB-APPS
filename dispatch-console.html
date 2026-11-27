@@ -1397,6 +1397,7 @@
               <div id="warehouse-log-filters" class="grid grid-cols-2 sm:flex gap-2">
                 <select
                   id="wh-filter-type"
+                  autocomplete="off"
                   onchange="renderWarehouseTab()"
                   class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
@@ -1407,6 +1408,7 @@
                 </select>
                 <select
                   id="wh-filter-item"
+                  autocomplete="off"
                   onchange="renderWarehouseTab()"
                   class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
@@ -5602,15 +5604,17 @@ const INDONESIA_REGIONS = {
       let gasGI = 0;
 
       rawLogs.forEach((m) => {
-        if (m.is_void || Number(m.qty) <= 0) return;
+        if (!m || m.is_void || Number(m.qty) <= 0) return;
         const q = Number(m.qty) || 0;
-        if (m.item === 'beras') {
-          if (m.type === 'INITIAL-STOCK') berasInitial += q;
-          else if (m.type === 'GR') berasGR += q;
+        const mItem = String(m.item || '').toLowerCase().trim();
+        const mType = String(m.type || '').toUpperCase().trim();
+        if (mItem === 'beras') {
+          if (mType === 'INITIAL-STOCK') berasInitial += q;
+          else if (mType === 'GR' || mType === 'GR-BATAL' || mType === 'GR-REFUND') berasGR += q;
           else berasGI += q;
-        } else if (m.item === 'gas') {
-          if (m.type === 'INITIAL-STOCK') gasInitial += q;
-          else if (m.type === 'GR') gasGR += q;
+        } else if (mItem === 'gas') {
+          if (mType === 'INITIAL-STOCK') gasInitial += q;
+          else if (mType === 'GR' || mType === 'GR-BATAL' || mType === 'GR-REFUND') gasGR += q;
           else gasGI += q;
         }
       });
@@ -6093,6 +6097,19 @@ const INDONESIA_REGIONS = {
     // 9. NAVIGASI TAB
     // =========================================================================
     function switchTab(tabName) {
+      if (tabName === 'settings' && typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab()) {
+        const fallbackTab = (typeof getEffectiveOperationalRole === 'function' && getEffectiveOperationalRole() === 'warehouse_admin')
+          ? 'warehouse'
+          : 'record';
+        if (typeof showToast === 'function') {
+          showToast('Akses Ditolak: Menu Pengaturan hanya dapat diakses oleh role Admin.', 'error');
+        }
+        if (typeof syncSettingsTabAccessUI === 'function') {
+          syncSettingsTabAccessUI();
+        }
+        return switchTab(fallbackTab);
+      }
+
       state.currentTab = tabName;
 
       document.querySelectorAll('.tab-view').forEach((el) => el.classList.add('hidden'));
@@ -6120,6 +6137,9 @@ const INDONESIA_REGIONS = {
       }
 
       updateResponsiveLayoutContainers();
+      if (typeof syncSettingsTabAccessUI === 'function') {
+        syncSettingsTabAccessUI();
+      }
       if (tabName === 'customers') renderCustomersTab();
       if (tabName === 'history') renderHistoryTab();
       if (tabName === 'warehouse') renderWarehouseTab();
@@ -10132,18 +10152,22 @@ const INDONESIA_REGIONS = {
       const filterType = document.getElementById('wh-filter-type')?.value || 'all';
       const filterItem = document.getElementById('wh-filter-item')?.value || 'all';
 
-      const filteredWh = state.warehouseLogs.filter((m) => {
-        if (m.is_void || Number(m.qty) <= 0) return false;
-        if (filterType !== 'all') {
-          if (filterType === 'GI-PELANGGAN') {
-            if (m.type !== 'GI-PELANGGAN' && m.type !== 'GI-WARGA') return false;
-          } else if (m.type !== filterType) {
-            return false;
+      const filteredWh = sortWarehouseLogsNewestFirst(
+        (state.warehouseLogs || []).filter((m) => {
+          if (!m || m.is_void || Number(m.qty) <= 0) return false;
+          const mType = String(m.type || '').toUpperCase().trim();
+          const mItem = String(m.item || '').toLowerCase().trim();
+          if (filterType !== 'all') {
+            if (filterType === 'GI-PELANGGAN') {
+              if (mType !== 'GI-PELANGGAN' && mType !== 'GI-WARGA') return false;
+            } else if (mType !== filterType) {
+              return false;
+            }
           }
-        }
-        if (filterItem !== 'all' && m.item !== filterItem) return false;
-        return true;
-      });
+          if (filterItem !== 'all' && mItem !== filterItem) return false;
+          return true;
+        })
+      );
 
       const tbody = document.getElementById('warehouse-logs-tbody');
       const mobileCardsEl = document.getElementById('warehouse-mobile-cards-wrapper');
@@ -10159,18 +10183,20 @@ const INDONESIA_REGIONS = {
       if (tbody) {
         tbody.innerHTML = filteredWh
           .map((m) => {
-            const isInitial = m.type === 'INITIAL-STOCK';
-            const isGR = m.type === 'GR';
-            const isAuto = (m.type === 'GI-WARGA' || m.type === 'GI-PELANGGAN');
+            const mType = String(m.type || '').toUpperCase().trim();
+            const mItem = String(m.item || '').toLowerCase().trim();
+            const isInitial = mType === 'INITIAL-STOCK';
+            const isGR = mType === 'GR' || mType === 'GR-BATAL' || mType === 'GR-REFUND';
+            const isAuto = (mType === 'GI-WARGA' || mType === 'GI-PELANGGAN');
             const typeBadge = isInitial
               ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-blue-100 text-blue-800">STOK-AWAL</span>`
               : (isGR
-                ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800">GR (MASUK)</span>`
+                ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-emerald-100 text-emerald-800">${escapeHtml(mType === 'GR' ? 'GR (MASUK)' : mType)}</span>`
                 : (isAuto
                   ? `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-sky-100 text-sky-800">GI (PELANGGAN)</span>`
                   : `<span class="px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-100 text-amber-800">GI-MANUAL</span>`));
 
-            const itemBadge = m.item === 'beras'
+            const itemBadge = mItem === 'beras'
               ? `<span class="inline-flex items-center gap-1 font-bold text-amber-900">${getBerasMaterialSVG('w-3.5 h-3.5')} Beras</span>`
               : `<span class="inline-flex items-center gap-1 font-bold text-emerald-900">${getGasMaterialSVG('w-3.5 h-3.5')} Gas LPG</span>`;
 
@@ -10189,16 +10215,16 @@ const INDONESIA_REGIONS = {
                 <td class="py-2.5 px-3.5 whitespace-nowrap">${typeBadge}</td>
                 <td class="py-2.5 px-3.5 whitespace-nowrap">${itemBadge}</td>
                 <td class="py-2.5 px-3.5 font-mono text-xs font-extrabold whitespace-nowrap ${(isGR || isInitial) ? 'text-emerald-700' : 'text-rose-600'}">
-                  ${(isGR || isInitial) ? `+${m.qty}` : `-${m.qty}`} ${m.item === 'beras' ? 'sak' : 'pcs'}
+                  ${(isGR || isInitial) ? `+${Number(m.qty)}` : `-${Number(m.qty)}`} ${mItem === 'beras' ? 'sak' : 'pcs'}
                 </td>
-                <td class="py-2.5 px-3.5 text-xs text-slate-700 font-medium">${m.ref}</td>
+                <td class="py-2.5 px-3.5 text-xs text-slate-700 font-medium">${escapeHtml(m.ref || '-')}</td>
                 <td class="py-2.5 px-3.5 text-right whitespace-nowrap">
                   ${
                     isAuto
                       ? `<span class="text-[11px] text-slate-400 italic">Otomatis dari Riwayat</span>`
                       : `<button
                           type="button"
-                          onclick="confirmDeleteWarehouseMutation('${m.id}')"
+                          onclick="confirmDeleteWarehouseMutation('${escapeHtml(m.id)}')"
                           class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-xs transition"
                         >
                           <i data-lucide="trash-2" class="w-3 h-3"></i>
@@ -10215,13 +10241,15 @@ const INDONESIA_REGIONS = {
       if (mobileCardsEl) {
         mobileCardsEl.innerHTML = filteredWh
           .map((m) => {
-            const isInitial = m.type === 'INITIAL-STOCK';
-            const isGR = m.type === 'GR';
-            const isAuto = (m.type === 'GI-WARGA' || m.type === 'GI-PELANGGAN');
+            const mType = String(m.type || '').toUpperCase().trim();
+            const mItem = String(m.item || '').toLowerCase().trim();
+            const isInitial = mType === 'INITIAL-STOCK';
+            const isGR = mType === 'GR' || mType === 'GR-BATAL' || mType === 'GR-REFUND';
+            const isAuto = (mType === 'GI-WARGA' || mType === 'GI-PELANGGAN');
             const typeBadge = isInitial
               ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-blue-100 text-blue-800">STOK-AWAL</span>`
               : (isGR
-                ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800">GR (MASUK)</span>`
+                ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800">${escapeHtml(mType === 'GR' ? 'GR (MASUK)' : mType)}</span>`
                 : (isAuto
                   ? `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-sky-100 text-sky-800">GI (PELANGGAN)</span>`
                   : `<span class="px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-100 text-amber-800">GI-MANUAL</span>`));
@@ -10234,17 +10262,17 @@ const INDONESIA_REGIONS = {
                     <span class="font-mono text-[11px] font-bold text-slate-600">${formatShortDateID(m.date)}</span>
                   </div>
                   <span class="font-mono text-xs font-extrabold ${(isGR || isInitial) ? 'text-emerald-700' : 'text-rose-600'}">
-                    ${(isGR || isInitial) ? `+${m.qty}` : `-${m.qty}`} ${m.item === 'beras' ? 'sak Beras' : 'pcs Gas'}
+                    ${(isGR || isInitial) ? `+${Number(m.qty)}` : `-${Number(m.qty)}`} ${mItem === 'beras' ? 'sak Beras' : 'pcs Gas'}
                   </span>
                 </div>
                 <div class="flex items-center justify-between gap-2 pt-1">
-                  <p class="text-[11px] text-slate-700 font-medium truncate">${m.ref}</p>
+                  <p class="text-[11px] text-slate-700 font-medium truncate">${escapeHtml(m.ref || '-')}</p>
                   ${
                     isAuto
                       ? ''
                       : `<button
                           type="button"
-                          onclick="confirmDeleteWarehouseMutation('${m.id}')"
+                          onclick="confirmDeleteWarehouseMutation('${escapeHtml(m.id)}')"
                           class="p-1 rounded-lg bg-rose-50 text-rose-700 shrink-0"
                         >
                           <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
@@ -10376,13 +10404,24 @@ const INDONESIA_REGIONS = {
           if (isCloud) {
             try {
               await pushWarehouseMutationToSupabase(newWhEntry);
-              state.warehouseLogs.unshift(newWhEntry);
+              upsertWarehouseLogEntry(newWhEntry);
 
               document.getElementById('wh-form-qty').value = '';
               document.getElementById('wh-form-ref').value = '';
               const presetSelect = document.getElementById('wh-ref-preset-select');
               if (presetSelect) presetSelect.value = '';
+              const filterTypeEl = document.getElementById('wh-filter-type');
+              if (filterTypeEl && filterTypeEl.value && filterTypeEl.value !== 'all' && filterTypeEl.value !== newWhEntry.type) {
+                filterTypeEl.value = 'all';
+              }
+              const filterItemEl = document.getElementById('wh-filter-item');
+              if (filterItemEl && filterItemEl.value && filterItemEl.value !== 'all' && filterItemEl.value !== newWhEntry.item) {
+                filterItemEl.value = 'all';
+              }
               persistState();
+              if (CatatKuotaIDB && typeof CatatKuotaIDB.flushNow === 'function') {
+                try { await CatatKuotaIDB.flushNow(); } catch (flushErr) { console.warn('flushNow mutasi gudang gagal:', flushErr); }
+              }
               refreshAllUI();
 
               const toastMsg = isInitial
@@ -10395,12 +10434,20 @@ const INDONESIA_REGIONS = {
               showToast(`Gagal mencatat mutasi gudang ke cloud: ${err.message}`, 'error');
             }
           } else {
-            state.warehouseLogs.unshift(newWhEntry);
+            upsertWarehouseLogEntry(newWhEntry);
 
             document.getElementById('wh-form-qty').value = '';
             document.getElementById('wh-form-ref').value = '';
             const presetSelect = document.getElementById('wh-ref-preset-select');
             if (presetSelect) presetSelect.value = '';
+            const filterTypeEl = document.getElementById('wh-filter-type');
+            if (filterTypeEl && filterTypeEl.value && filterTypeEl.value !== 'all' && filterTypeEl.value !== newWhEntry.type) {
+              filterTypeEl.value = 'all';
+            }
+            const filterItemEl = document.getElementById('wh-filter-item');
+            if (filterItemEl && filterItemEl.value && filterItemEl.value !== 'all' && filterItemEl.value !== newWhEntry.item) {
+              filterItemEl.value = 'all';
+            }
             persistState();
             refreshAllUI();
 
@@ -11756,6 +11803,10 @@ const INDONESIA_REGIONS = {
 
     async function saveSettings(e) {
       if (e && e.preventDefault) e.preventDefault();
+      if (typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab()) {
+        showToast('Akses Ditolak: Konfigurasi gerai & kuota hanya dapat diubah oleh role Admin.', 'error');
+        return;
+      }
       const appTitle = document.getElementById('set-app-title').value.trim().toUpperCase();
       const maxBeras = parseInt(document.getElementById('set-max-beras').value, 10);
       const maxGas = parseInt(document.getElementById('set-max-gas').value, 10);
@@ -11821,6 +11872,10 @@ const INDONESIA_REGIONS = {
     }
 
     function confirmResetDemoData() {
+      if (typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab()) {
+        showToast('Akses Ditolak: Manajemen data hanya dapat diakses oleh role Admin.', 'error');
+        return;
+      }
       openConfirmModal(
         'Reset ke Data Contoh?',
         'Data saat ini akan diganti kembali dengan data contoh siklus 30 hari beserta saldo stok gudang awal.',
@@ -11838,6 +11893,10 @@ const INDONESIA_REGIONS = {
     }
 
     function confirmClearAllData() {
+      if (typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab()) {
+        showToast('Akses Ditolak: Manajemen data hanya dapat diakses oleh role Admin.', 'error');
+        return;
+      }
       openConfirmModal(
         'Kosongkan Semua Data?',
         'PERINGATAN: Seluruh data KK, riwayat pengambilan, mutasi stok gudang, dan nomor surat jalan (DO) akan dihapus bersih secara permanen (Lokal & Supabase Cloud). Tindakan ini tidak dapat dibatalkan. Lanjutkan?',
@@ -12478,6 +12537,49 @@ const INDONESIA_REGIONS = {
       syncSupabaseLoginGate();
     }
 
+    function isCloudModeActive() {
+      const cfg = (typeof getSupabaseConfig === 'function') ? getSupabaseConfig() : { url: '', key: '' };
+      const url = String((cfg && cfg.url) || '').trim();
+      const key = String((cfg && cfg.key) || '').trim();
+      return Boolean(url && key);
+    }
+
+    function getEffectiveOperationalRole() {
+      const session = (typeof getAuthSession === 'function') ? getAuthSession() : null;
+      const candidate = state.currentUserRole || (session && session.role) || '';
+      if (typeof candidate !== 'string') return null;
+      const clean = candidate.toLowerCase().trim();
+      return VALID_OPERATIONAL_ROLES.includes(clean) ? clean : null;
+    }
+
+    function canAccessSettingsTab() {
+      if (!isCloudModeActive()) return true;
+      return getEffectiveOperationalRole() === 'admin';
+    }
+
+    function syncSettingsTabAccessUI() {
+      const allowed = canAccessSettingsTab();
+      const deskBtn = document.getElementById('tab-btn-settings');
+      const mobBtn = document.getElementById('mob-btn-settings');
+      const settingsView = document.getElementById('tab-view-settings');
+      if (deskBtn) {
+        deskBtn.classList.toggle('hidden', !allowed);
+        deskBtn.setAttribute('aria-hidden', allowed ? 'false' : 'true');
+      }
+      if (mobBtn) {
+        mobBtn.classList.toggle('hidden', !allowed);
+        mobBtn.setAttribute('aria-hidden', allowed ? 'false' : 'true');
+      }
+      const mobNavGrid = document.querySelector('#mobile-bottom-nav > div');
+      if (mobNavGrid && mobNavGrid.classList) {
+        mobNavGrid.classList.toggle('grid-cols-5', allowed);
+        mobNavGrid.classList.toggle('grid-cols-4', !allowed);
+      }
+      if (!allowed && settingsView) {
+        settingsView.classList.add('hidden');
+      }
+    }
+
     function applyRoleBasedUIPrivileges(role) {
       const normRole = (typeof role === 'string' && VALID_OPERATIONAL_ROLES.includes(role.toLowerCase().trim()))
         ? role.toLowerCase().trim()
@@ -12493,6 +12595,15 @@ const INDONESIA_REGIONS = {
       state.isAdminUnlocked = canAccessWarehouse;
 
       renderHeaderAuthBadge();
+      syncSettingsTabAccessUI();
+
+      if (isCloudModeActive()) {
+        if (normRole === 'warehouse_admin' && state.currentTab !== 'warehouse' && typeof switchTab === 'function') {
+          switchTab('warehouse');
+        } else if (!canAccessSettingsTab() && state.currentTab === 'settings' && typeof switchTab === 'function') {
+          switchTab('record');
+        }
+      }
     }
 
     function openLoginModal(options = {}) {
@@ -12961,11 +13072,24 @@ const INDONESIA_REGIONS = {
               targetLog.sync_status = 'SYNCED';
             }
           } else if (entry.type === 'process_warehouse_mutation') {
-            await callProcessWarehouseMutationRPC(entry.payload);
+            const whRpcRes = await callProcessWarehouseMutationRPC(entry.payload);
+            const serverWh = (whRpcRes && whRpcRes.warehouse_log) ? whRpcRes.warehouse_log : null;
+            const confirmedAt = Date.now();
             const targetWh = (state.warehouseLogs || []).find((w) => w.request_id === entry.requestId || w.id === entry.payload.p_custom_mutation_id);
             if (targetWh) {
+              if (serverWh) {
+                targetWh.id = serverWh.id || targetWh.id;
+                targetWh.created_at = serverWh.created_at || targetWh.created_at || targetWh.local_updated_at || new Date(confirmedAt).toISOString();
+              }
               targetWh.is_dirty = false;
               targetWh.sync_status = 'SYNCED';
+              targetWh._confirmedAt = confirmedAt;
+            } else if (serverWh) {
+              const norm = normalizeWarehouseRow(serverWh);
+              norm.sync_status = 'SYNCED';
+              norm._confirmedAt = confirmedAt;
+              if (!norm.created_at) norm.created_at = new Date(confirmedAt).toISOString();
+              upsertWarehouseLogEntry(norm);
             }
           }
           OutboxManager.remove(entry.requestId);
@@ -13057,19 +13181,54 @@ const INDONESIA_REGIONS = {
     }
 
     function normalizeWarehouseRow(w) {
+      const qtyNum = Number(w.qty) || 0;
+      const typeStr = String(w.type || '').toUpperCase().trim();
+      const itemStr = String(w.item || '').toLowerCase().trim();
+      const dateStr = String(w.date || '').slice(0, 10);
       return {
         id: w.id,
         request_id: w.request_id || null,
-        date: w.date,
-        type: w.type,
-        item: w.item,
-        qty: Number(w.qty) || 0,
+        date: dateStr,
+        type: typeStr,
+        item: itemStr,
+        qty: qtyNum,
         ref: w.ref || '',
         logId: w.log_id || w.logId || null,
-        is_void: Boolean(w.is_void) || Number(w.qty) === 0,
+        is_void: Boolean(w.is_void) || qtyNum === 0,
         created_at: w.created_at || null,
+        local_updated_at: w.local_updated_at || w.created_at || null,
         is_dirty: false,
       };
+    }
+
+    function sortWarehouseLogsNewestFirst(list) {
+      return (Array.isArray(list) ? list : []).slice().sort((a, b) => {
+        const dateA = String((a && a.date) || '').slice(0, 10);
+        const dateB = String((b && b.date) || '').slice(0, 10);
+        if (dateA !== dateB) return dateB.localeCompare(dateA);
+        const rawTsA = a && (a.created_at || a.local_updated_at);
+        const rawTsB = b && (b.created_at || b.local_updated_at);
+        const msA = rawTsA ? (Date.parse(rawTsA) || 0) : 0;
+        const msB = rawTsB ? (Date.parse(rawTsB) || 0) : 0;
+        if (msA !== msB) return msB - msA;
+        return String((b && b.id) || '').localeCompare(String((a && a.id) || ''));
+      });
+    }
+
+    function upsertWarehouseLogEntry(entry) {
+      if (!entry || !entry.id) return entry;
+      if (!Array.isArray(state.warehouseLogs)) state.warehouseLogs = [];
+      const existingIdx = state.warehouseLogs.findIndex(
+        (w) => w && (w.id === entry.id || (entry.request_id && w.request_id === entry.request_id))
+      );
+      if (existingIdx >= 0) {
+        const merged = { ...state.warehouseLogs[existingIdx], ...entry };
+        state.warehouseLogs.splice(existingIdx, 1);
+        state.warehouseLogs.unshift(merged);
+        return merged;
+      }
+      state.warehouseLogs.unshift(entry);
+      return entry;
     }
 
     async function invokeExpandSyncRpc(rpcName, payload, timeoutMs = 10000) {
@@ -13161,6 +13320,8 @@ const INDONESIA_REGIONS = {
       }
 
       isSyncing = true;
+      const syncStartedAtMs = Date.now();
+      const isRecentConfirmedWh = (w) => Boolean(w && Number(w._confirmedAt) >= (syncStartedAtMs - 10000));
       if (!silent) updateCloudStatusUI('syncing', 'Menghubungi RPC sinkronisasi terotorisasi...');
 
       try {
@@ -13222,8 +13383,11 @@ const INDONESIA_REGIONS = {
               (mem.logs || []).forEach((l) => { if (l.is_dirty && !tombLogIds.has(l.id)) logMap.set(l.id, l); });
 
               const whMap = new Map();
-              (live.warehouseLogs || []).forEach((w) => { if (!tombWhIds.has(w.id)) whMap.set(w.id, w); });
-              (mem.warehouseLogs || []).forEach((w) => { if (w.is_dirty && !tombWhIds.has(w.id)) whMap.set(w.id, w); });
+              (live.warehouseLogs || []).forEach((w) => { if (w && w.id && !tombWhIds.has(w.id)) whMap.set(w.id, w); });
+              (mem.warehouseLogs || []).forEach((w) => {
+                if (!w || !w.id || tombWhIds.has(w.id)) return;
+                if (w.is_dirty || isRecentConfirmedWh(w)) whMap.set(w.id, w);
+              });
 
               for (const ch of allChanges) {
                 const isDel = String(ch.action_type || '').toUpperCase() === 'DELETE';
@@ -13250,10 +13414,13 @@ const INDONESIA_REGIONS = {
               }
 
               const hasStockPerm = ['warehouse_admin', 'admin'].includes(session.role);
+              const nextWhRows = hasStockPerm
+                ? sortWarehouseLogsNewestFirst(Array.from(whMap.values()))
+                : Array.from(whMap.values()).filter((w) => w.is_dirty || w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED');
               return {
                 customers: Array.from(custMap.values()),
                 logs: Array.from(logMap.values()),
-                warehouseLogs: hasStockPerm ? Array.from(whMap.values()) : Array.from(whMap.values()).filter((w) => w.is_dirty || w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED'),
+                warehouseLogs: nextWhRows,
                 tombstones: [],
                 syncMeta: {
                   ...(live.syncMeta || currentMeta),
@@ -13418,7 +13585,13 @@ const INDONESIA_REGIONS = {
                 stagingBuffer.warehouseLogs.forEach((w, pk) => { if (!tombWhIds.has(pk)) m.set(pk, w); });
                 whProtect.reviewMap.forEach((w, pk) => { if (!m.has(pk)) m.set(pk, w); });
                 whProtect.dirtyMap.forEach((w, pk) => m.set(pk, w));
-                nextWarehouseLogs = Array.from(m.values());
+                for (const w of [...(live.warehouseLogs || []), ...(mem.warehouseLogs || [])]) {
+                  if (!w || !w.id || tombWhIds.has(w.id)) continue;
+                  if (isRecentConfirmedWh(w) && !m.has(w.id)) {
+                    m.set(w.id, w);
+                  }
+                }
+                nextWarehouseLogs = sortWarehouseLogsNewestFirst(Array.from(m.values()));
               } else {
                 const m = new Map();
                 whProtect.reviewMap.forEach((w, pk) => m.set(pk, w));
@@ -13967,11 +14140,29 @@ const INDONESIA_REGIONS = {
 
       try {
         const resData = await callProcessWarehouseMutationRPC(rpcPayload);
+        const serverWh = (resData && resData.warehouse_log) ? resData.warehouse_log : null;
+        const confirmedAt = Date.now();
+        if (serverWh) {
+          whEntry.id = serverWh.id || whEntry.id;
+          whEntry.request_id = serverWh.request_id || requestId;
+          whEntry.date = String(serverWh.date || whEntry.date || '').slice(0, 10);
+          whEntry.type = String(serverWh.type || cleanType).toUpperCase().trim();
+          whEntry.item = String(serverWh.item || whEntry.item || '').toLowerCase().trim();
+          whEntry.qty = Number(serverWh.qty ?? whEntry.qty) || 0;
+          whEntry.ref = serverWh.ref !== undefined ? String(serverWh.ref || '') : (whEntry.ref || '');
+          whEntry.logId = serverWh.log_id || whEntry.logId || null;
+          whEntry.is_void = Boolean(serverWh.is_void) || whEntry.qty === 0;
+          whEntry.created_at = serverWh.created_at || whEntry.created_at || whEntry.local_updated_at || new Date(confirmedAt).toISOString();
+        } else if (!whEntry.created_at) {
+          whEntry.created_at = whEntry.local_updated_at || new Date(confirmedAt).toISOString();
+        }
+        whEntry.local_updated_at = whEntry.local_updated_at || whEntry.created_at || new Date(confirmedAt).toISOString();
+        whEntry.is_dirty = false;
+        whEntry.sync_status = 'SYNCED';
+        whEntry._confirmedAt = confirmedAt;
 
         OutboxManager.remove(requestId);
-        whEntry.is_dirty = false;
-        const targetWh = state.warehouseLogs.find((w) => w.id === whEntry.id);
-        if (targetWh) targetWh.is_dirty = false;
+        upsertWarehouseLogEntry(whEntry);
         persistState();
         return resData;
       } catch (err) {
@@ -14234,6 +14425,16 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     function refreshAllUI() {
       renderHeaderAuthBadge();
+      if (typeof syncSettingsTabAccessUI === 'function') {
+        syncSettingsTabAccessUI();
+      }
+      if (typeof canAccessSettingsTab === 'function' && !canAccessSettingsTab() && state.currentTab === 'settings' && typeof switchTab === 'function') {
+        const fallbackTab = (typeof getEffectiveOperationalRole === 'function' && getEffectiveOperationalRole() === 'warehouse_admin')
+          ? 'warehouse'
+          : 'record';
+        switchTab(fallbackTab);
+        return;
+      }
       updateHeaderAndBadges();
       updateResponsiveLayoutContainers();
       renderRecordTab();
