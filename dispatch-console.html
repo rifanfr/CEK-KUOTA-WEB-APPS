@@ -783,14 +783,14 @@
           type="button"
           id="tab-btn-warehouse"
           onclick="switchTab('warehouse')"
-          class="tab-btn w-full inline-flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold whitespace-nowrap transition-all bg-slate-100 text-slate-700 border-slate-300/80 hover:bg-slate-200 hover:text-ink"
+          class="tab-btn w-full inline-flex items-center gap-2 px-3 py-2.5 rounded-xl border text-xs sm:text-sm font-semibold whitespace-nowrap min-w-0 transition-all bg-slate-100 text-slate-700 border-slate-300/80 hover:bg-slate-200 hover:text-ink"
         >
           <i data-lucide="warehouse" class="w-4 h-4 shrink-0"></i>
-          <span>Stok Gudang</span>
-          <span class="ml-auto inline-flex items-center gap-1.5">
-            <span id="nav-warehouse-pin-badge" class="inline-flex items-center px-1.5 py-0.5 rounded-md text-xs font-bold bg-white text-slate-700 border border-slate-300">PIN</span>
-            <span id="nav-warehouse-alert-dot" class="hidden inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-extrabold bg-status-danger-bg text-status-danger-text border border-status-danger-border animate-pulse" title="Peringatan: Sisa stok gudang menipis">
-              <span class="w-1.5 h-1.5 rounded-full bg-rose-600"></span>
+          <span class="truncate">Stok Gudang</span>
+          <span class="ml-auto inline-flex items-center gap-1 shrink-0">
+            <span id="nav-warehouse-pin-badge" class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] leading-none font-bold bg-white text-slate-700 border border-slate-300">PIN</span>
+            <span id="nav-warehouse-alert-dot" class="hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] leading-none font-extrabold bg-status-danger-bg text-status-danger-text border border-status-danger-border animate-pulse" title="Peringatan: Sisa stok gudang menipis">
+              <span class="w-1.5 h-1.5 rounded-full bg-rose-600 shrink-0"></span>
               <span>Tipis</span>
             </span>
           </span>
