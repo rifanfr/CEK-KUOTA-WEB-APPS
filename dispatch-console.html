@@ -1065,6 +1065,7 @@
                 <input
                   type="date"
                   id="record-tx-date"
+                  onchange="if (this.value && this.value > todayLocalISO()) { this.value = todayLocalISO(); showToast('Tanggal transaksi tidak boleh di masa depan.', 'warning'); }"
                   class="bg-transparent text-xs font-bold text-ink focus:outline-none cursor-pointer"
                 />
               </div>
@@ -4397,6 +4398,14 @@ const INDONESIA_REGIONS = {
         }
         showToast('PIN Benar. Selamat bertugas!', 'success');
         checkAuthGate();
+        if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB._ready && CatatKuotaIDB.reloadFromIdbIntoMemory) {
+          CatatKuotaIDB.reloadFromIdbIntoMemory()
+            .then(() => refreshAllUI())
+            .catch(() => { loadState(); refreshAllUI(); });
+        } else {
+          loadState();
+          refreshAllUI();
+        }
       } else {
         failedPinAttempts++;
         if (failedPinAttempts >= 5) {
@@ -4439,12 +4448,42 @@ const INDONESIA_REGIONS = {
       }
     }
 
+    function clearSensitiveMemoryState() {
+      if (typeof state === 'undefined' || !state) return;
+      state.customers = [];
+      state.logs = [];
+      state.warehouseLogs = [];
+      if (state.record) {
+        state.record.kkInput = '';
+        state.record.newCustomerName = '';
+        state.record.newCustomerDetail = '';
+      }
+      state.currentKioskCustomer = null;
+    }
+
+    function isSensitiveDataLoadAllowed() {
+      if (typeof state !== 'undefined' && state.isPublicKioskMode) return false;
+      if (typeof isCloudAuthGateRequired === 'function' && isCloudAuthGateRequired()) return false;
+      if (
+        typeof isAppUnlocked === 'function' &&
+        !isAppUnlocked() &&
+        typeof state !== 'undefined' &&
+        state.settings &&
+        String(state.settings.adminPin || '').trim()
+      ) {
+        return false;
+      }
+      return true;
+    }
+
     function lockAppSession() {
       sessionStorage.removeItem(AUTH_STORAGE_KEY);
       localStorage.removeItem(AUTH_STORAGE_KEY);
       state.isAdminUnlocked = false;
+      clearSensitiveMemoryState();
       showToast('Sesi telah dikunci. Silakan masuk kembali.', 'info');
       checkAuthGate();
+      refreshAllUI();
     }
 
     const DEFAULT_SETTINGS = {
@@ -5212,9 +5251,13 @@ const INDONESIA_REGIONS = {
             settingsRow.value.supabaseUrl !== state.settings.supabaseUrl ||
             settingsRow.value.supabaseKey !== state.settings.supabaseKey;
         }
-        state.customers = custRows || [];
-        state.logs = logRows || [];
-        state.warehouseLogs = whRows || [];
+        if (isSensitiveDataLoadAllowed()) {
+          state.customers = custRows || [];
+          state.logs = logRows || [];
+          state.warehouseLogs = whRows || [];
+        } else {
+          clearSensitiveMemoryState();
+        }
         state.doSeqTracker = (doSeqRow && doSeqRow.value) ? doSeqRow.value : (state.doSeqTracker || {});
         if (syncRevRow && typeof syncRevRow.rev === 'number') {
           state._lastSyncRev = syncRevRow.rev;
@@ -5718,38 +5761,42 @@ const INDONESIA_REGIONS = {
       );
       const DEMO_KKS = new Set(['3201011508850001', '3201012204900002', '3201010811780003', '3201016007920004']);
 
-      const resCustomers = safeReadStorageJSON(STORAGE_KEYS.CUSTOMERS, [], isArr);
-      if (resCustomers.corrupted) corruptedKeys.push('Data KK');
-      state.customers = (resCustomers.value || []).map((c) => {
-        const isDemo = DEMO_KKS.has(c.no_kk) || (typeof c.member_id === 'string' && c.member_id.startsWith('KK-REG-0000'));
-        if (isDemo || (!c.registration_request_id && !activeOutboxRequestIds.has(c.registration_request_id))) {
-          if (!c.sync_status) c.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
-          if (c.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') c.is_dirty = false;
-        }
-        return c;
-      });
+      if (isSensitiveDataLoadAllowed()) {
+        const resCustomers = safeReadStorageJSON(STORAGE_KEYS.CUSTOMERS, [], isArr);
+        if (resCustomers.corrupted) corruptedKeys.push('Data KK');
+        state.customers = (resCustomers.value || []).map((c) => {
+          const isDemo = DEMO_KKS.has(c.no_kk) || (typeof c.member_id === 'string' && c.member_id.startsWith('KK-REG-0000'));
+          if (isDemo || (!c.registration_request_id && !activeOutboxRequestIds.has(c.registration_request_id))) {
+            if (!c.sync_status) c.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+            if (c.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') c.is_dirty = false;
+          }
+          return c;
+        });
 
-      const resLogs = safeReadStorageJSON(STORAGE_KEYS.LOGS, [], isArr);
-      if (resLogs.corrupted) corruptedKeys.push('Riwayat Pengambilan');
-      state.logs = (resLogs.value || []).map((l) => {
-        const isDemo = (typeof l.id === 'string' && l.id.startsWith('LOG-100')) || DEMO_KKS.has(l.no_kk);
-        if (isDemo || (!l.request_id && !activeOutboxRequestIds.has(l.request_id))) {
-          if (!l.sync_status) l.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
-          if (l.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') l.is_dirty = false;
-        }
-        return l;
-      });
+        const resLogs = safeReadStorageJSON(STORAGE_KEYS.LOGS, [], isArr);
+        if (resLogs.corrupted) corruptedKeys.push('Riwayat Pengambilan');
+        state.logs = (resLogs.value || []).map((l) => {
+          const isDemo = (typeof l.id === 'string' && l.id.startsWith('LOG-100')) || DEMO_KKS.has(l.no_kk);
+          if (isDemo || (!l.request_id && !activeOutboxRequestIds.has(l.request_id))) {
+            if (!l.sync_status) l.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+            if (l.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') l.is_dirty = false;
+          }
+          return l;
+        });
 
-      const resWarehouse = safeReadStorageJSON(STORAGE_KEYS.WAREHOUSE, [], isArr);
-      if (resWarehouse.corrupted) corruptedKeys.push('Log Gudang');
-      state.warehouseLogs = (resWarehouse.value || []).map((w) => {
-        const isDemo = typeof w.id === 'string' && (w.id.startsWith('WH-GR-00') || w.id.startsWith('WH-GI-100'));
-        if (isDemo || (!w.request_id && !activeOutboxRequestIds.has(w.request_id))) {
-          if (!w.sync_status) w.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
-          if (w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') w.is_dirty = false;
-        }
-        return w;
-      });
+        const resWarehouse = safeReadStorageJSON(STORAGE_KEYS.WAREHOUSE, [], isArr);
+        if (resWarehouse.corrupted) corruptedKeys.push('Log Gudang');
+        state.warehouseLogs = (resWarehouse.value || []).map((w) => {
+          const isDemo = typeof w.id === 'string' && (w.id.startsWith('WH-GR-00') || w.id.startsWith('WH-GI-100'));
+          if (isDemo || (!w.request_id && !activeOutboxRequestIds.has(w.request_id))) {
+            if (!w.sync_status) w.sync_status = 'LEGACY_LOCAL_REVIEW_REQUIRED';
+            if (w.sync_status === 'LEGACY_LOCAL_REVIEW_REQUIRED') w.is_dirty = false;
+          }
+          return w;
+        });
+      } else {
+        clearSensitiveMemoryState();
+      }
 
       const resDOSeq = safeReadStorageJSON(STORAGE_KEYS.DO_SEQ, {}, isPlainObj);
       if (resDOSeq.corrupted) corruptedKeys.push('Urutan DO');
@@ -6130,6 +6177,13 @@ const INDONESIA_REGIONS = {
     // =========================================================================
     function handleSimDateChange(newDateStr) {
       if (!newDateStr) return;
+      if (typeof isCloudModeActive === 'function' && isCloudModeActive()) {
+        state.simDate = BASE_TODAY_DATE;
+        const inputEl = document.getElementById('sim-date-input');
+        if (inputEl) inputEl.value = BASE_TODAY_DATE;
+        showToast('Tanggal simulasi hanya tersedia di Mode Lokal (Offline).', 'warning');
+        return;
+      }
       state.simDate = newDateStr;
       state.record.qtyBeras = 0;
       state.record.qtyGas = 0;
@@ -6138,6 +6192,13 @@ const INDONESIA_REGIONS = {
     }
 
     function shiftSimDate(daysDelta) {
+      if (typeof isCloudModeActive === 'function' && isCloudModeActive()) {
+        state.simDate = BASE_TODAY_DATE;
+        const inputEl = document.getElementById('sim-date-input');
+        if (inputEl) inputEl.value = BASE_TODAY_DATE;
+        showToast('Tanggal simulasi hanya tersedia di Mode Lokal (Offline).', 'warning');
+        return;
+      }
       const shifted = addDaysISO(state.simDate, daysDelta);
       state.simDate = shifted;
       const inputEl = document.getElementById('sim-date-input');
@@ -7599,8 +7660,16 @@ const INDONESIA_REGIONS = {
         }
       }
 
-      const customDateVal = document.getElementById('record-tx-date')?.value;
-      const txDateStr = customDateVal || state.simDate;
+      const todayISO = todayLocalISO();
+      const customDateVal = String(document.getElementById('record-tx-date')?.value || '').trim();
+      const isCloud = typeof isCloudModeActive === 'function' && isCloudModeActive();
+      const txDateStr = customDateVal || (isCloud ? todayISO : state.simDate) || todayISO;
+      if (txDateStr > todayISO) {
+        showToast(`Tanggal transaksi (${formatShortDateID(txDateStr)}) tidak boleh melebihi hari ini (${formatShortDateID(todayISO)}).`, 'error');
+        const txDateEl = document.getElementById('record-tx-date');
+        if (txDateEl) txDateEl.value = todayISO;
+        return;
+      }
 
       // Evaluasi kuota tepat pada tanggal transaksi (mendukung transaksi mundur/backdated)
       const stats = getCustomerQuotaStats(kk, txDateStr);
@@ -8904,7 +8973,7 @@ const INDONESIA_REGIONS = {
               <tr class="hover:bg-slate-50 transition">
                 <td class="py-3 px-3.5 whitespace-nowrap font-mono text-xs text-slate-700 font-bold">
                   <div class="flex items-center gap-1.5">
-                    <span>${formatShortDateID(l.date)} <span class="text-slate-500 font-normal">(${l.time})</span></span>
+                    <span>${formatShortDateID(l.date)} <span class="text-slate-500 font-normal">(${escapeHtml(l.time)})</span></span>
                     ${
                       l.is_dirty
                         ? '<span title="Tersimpan lokal (Belum sinkron)" class="inline-flex items-center text-slate-400 hover:text-slate-600 transition cursor-help shrink-0"><svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/><path d="M12 9v3.5l1.5 1" stroke="#94a3b8" stroke-width="1.8"/></svg></span>'
@@ -8943,7 +9012,8 @@ const INDONESIA_REGIONS = {
                   <div class="relative inline-block text-left dropdown-history-menu">
                     <button
                       type="button"
-                      onclick="toggleHistoryActionMenu(event, '${l.id}')"
+                      data-id="${escapeHtml(l.id)}"
+                      onclick="toggleHistoryActionMenu(event, this.dataset.id)"
                       title="Pilihan Aksi"
                       aria-label="Pilihan aksi catatan"
                       aria-haspopup="menu"
@@ -8953,12 +9023,13 @@ const INDONESIA_REGIONS = {
                       <i data-lucide="more-vertical" class="w-4 h-4"></i>
                     </button>
                     <div
-                      id="hist-action-menu-${l.id}"
+                      id="hist-action-menu-${escapeHtml(l.id)}"
                       class="hist-action-dropdown hidden"
                     >
                       <button
                         type="button"
-                        onclick="closeAllHistoryActionMenus(); openEditLogModal('${l.id}')"
+                        data-id="${escapeHtml(l.id)}"
+                        onclick="closeAllHistoryActionMenus(); openEditLogModal(this.dataset.id)"
                         class="w-full text-left px-3 py-2 text-slate-700 hover:bg-amber-50 hover:text-amber-900 flex items-center gap-2 font-medium transition"
                       >
                         <i data-lucide="pencil" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i>
@@ -8967,7 +9038,8 @@ const INDONESIA_REGIONS = {
                       <div class="h-px bg-slate-100 my-1"></div>
                       <button
                         type="button"
-                        onclick="closeAllHistoryActionMenus(); confirmDeleteLog('${l.id}')"
+                        data-id="${escapeHtml(l.id)}"
+                        onclick="closeAllHistoryActionMenus(); confirmDeleteLog(this.dataset.id)"
                         class="w-full text-left px-3 py-2 text-rose-600 hover:bg-rose-50 flex items-center gap-2 font-medium transition"
                       >
                         <i data-lucide="undo-2" class="w-3.5 h-3.5 text-rose-500 shrink-0"></i>
@@ -8992,7 +9064,7 @@ const INDONESIA_REGIONS = {
                 <div class="flex items-start justify-between gap-2">
                   <div class="min-w-0">
                     <div class="flex items-center gap-1.5">
-                      <p class="font-mono text-xs font-bold text-ink">${formatShortDateID(l.date)} <span class="text-ink-secondary font-normal">• ${l.time}</span></p>
+                      <p class="font-mono text-xs font-bold text-ink">${formatShortDateID(l.date)} <span class="text-ink-secondary font-normal">• ${escapeHtml(l.time)}</span></p>
                       ${
                         l.is_dirty
                           ? '<span title="Tersimpan lokal (Belum sinkron)" class="inline-flex items-center text-slate-400 shrink-0"><svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/><path d="M12 9v3.5l1.5 1" stroke="#94a3b8" stroke-width="1.8"/></svg></span>'
@@ -9019,7 +9091,8 @@ const INDONESIA_REGIONS = {
                   <div class="inline-flex items-center gap-2 shrink-0">
                     <button
                       type="button"
-                      onclick="confirmDeleteLog('${l.id}')"
+                      data-id="${escapeHtml(l.id)}"
+                      onclick="confirmDeleteLog(this.dataset.id)"
                       class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 active:bg-rose-200 text-rose-700 border border-rose-200 font-bold text-xs transition min-h-[44px] shadow-sm"
                     >
                       <i data-lucide="undo-2" class="w-3.5 h-3.5"></i>
@@ -9027,7 +9100,8 @@ const INDONESIA_REGIONS = {
                     </button>
                     <button
                       type="button"
-                      onclick="openEditLogModal('${l.id}')"
+                      data-id="${escapeHtml(l.id)}"
+                      onclick="openEditLogModal(this.dataset.id)"
                       class="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-amber-50 hover:bg-amber-100 active:bg-amber-200 text-amber-900 border border-amber-300 font-bold text-xs transition min-h-[44px] shadow-sm"
                     >
                       <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
@@ -9864,93 +9938,6 @@ const INDONESIA_REGIONS = {
     }
 
     // CSV untuk Excel Indonesia: delimiter titik-koma, nomor KK dipaksa teks
-    // agar tidak berubah jadi notasi eksponensial (3.2E+15), BOM UTF-8, anti formula-injection.
-    function buildCSV(headers, rows) {
-      const esc = (v) => {
-        let s = String(v ?? '').trim();
-        const needsText = /^\d{10,}$/.test(s) || /^0\d+$/.test(s);
-        if (needsText) {
-          return `"=""${s}"""`;
-        }
-        if (/^[=+\-@\t\r]/.test(s)) {
-          s = `'${s}`;
-        }
-        return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-      };
-      const line = (arr) => arr.map(esc).join(';');
-      return '\uFEFF' + [line(headers), ...rows.map(line)].join('\r\n');
-    }
-
-    function downloadFilteredCSV() {
-      const data = getFilteredExportData();
-      if (!data || data.length === 0) {
-        showToast('Tidak ada data pada periode tanggal yang dipilih.', 'error');
-        return;
-      }
-
-      let filename = '';
-      let csvContent = '';
-
-      if (exportState.dataType === 'logs') {
-        filename = `riwayat-kuota-kk-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
-        const cycleDays = Number(state.settings.cycleDays) || 30;
-        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo', 'Petugas'];
-        const rows = data.map((l, idx) => [
-          idx + 1,
-          l.id,
-          l.date,
-          l.time,
-          String(l.no_kk || '').replace(/\D/g, ''),
-          l.nama || '',
-          l.qty_beras,
-          l.qty_gas,
-          l.total_pcs,
-          addDaysISO(l.date, cycleDays),
-          formatOperatorRoleEmailText(l),
-        ]);
-        csvContent = buildCSV(headers, rows);
-      } else {
-        filename = `mutasi-stok-gudang-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
-        const headers = ['No', 'ID_Mutasi', 'Tanggal', 'Tipe', 'Komoditas', 'Qty', 'No_DO_Keterangan', 'Petugas'];
-        const rows = data.map((w, idx) => [
-          idx + 1,
-          w.id,
-          w.date,
-          w.type,
-          w.item.toUpperCase(),
-          w.qty,
-          w.ref || '',
-          formatOperatorRoleEmailText(w),
-        ]);
-        csvContent = buildCSV(headers, rows);
-      }
-
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-
-      showToast('Berkas CSV mentah berhasil diunduh.', 'success');
-      closeExportModal();
-    }
-
-    function setExportFormat(format) {
-      exportState.format = format || 'excel';
-
-      const btnExcel = document.getElementById('btn-format-excel');
-      const btnCsv = document.getElementById('btn-format-csv');
-      const btnPdf = document.getElementById('btn-format-pdf');
-      const actionBtn = document.getElementById('btn-export-action-execute');
-
-      const baseClass = 'p-2.5 rounded-xl border text-center transition flex flex-col items-center justify-center gap-1 cursor-pointer';
-
-      if (btnExcel) {
-        if (exportState.format === 'excel') {
           btnExcel.className = `${baseClass} bg-emerald-50 border-emerald-500 text-emerald-900 shadow-2xs ring-2 ring-emerald-500/30`;
         } else {
           btnExcel.className = `${baseClass} bg-white border-slate-300 text-slate-700 hover:bg-slate-50`;
@@ -11834,6 +11821,21 @@ const INDONESIA_REGIONS = {
       if (addrSpan) addrSpan.textContent = formatCustomerMaskedAddress(customer);
 
       const stats = getCustomerQuotaStats(customer.no_kk, state.simDate);
+      const maskedCustSnapshot = {
+        member_id: customer.member_id || 'KK-REG-00001-7909',
+        nama: customer.nama,
+        no_kk: customer.no_kk,
+        desa: customer.desa || '',
+        kecamatan: customer.kecamatan || '',
+        kabupaten: customer.kabupaten || '',
+        provinsi: customer.provinsi || '',
+      };
+      // Kosongkan seluruh data warga & riwayat sensitif dari memori JS selama mode Kiosk Publik aktif
+      // tanpa menghapus IndexedDB/localStorage agar data offline tetap utuh saat staf login kembali.
+      if (typeof clearSensitiveMemoryState === 'function') {
+        clearSensitiveMemoryState();
+      }
+      state.currentKioskCustomer = maskedCustSnapshot;
 
       // Card Beras Kiosk
       const berasCard = document.getElementById('kiosk-beras-card');
@@ -12351,12 +12353,13 @@ const INDONESIA_REGIONS = {
               (c) => `
               <button
                 type="button"
-                onclick="onScanSuccess('${c.member_id || c.no_kk}')"
+                data-member-id="${escapeHtml(c.member_id || c.no_kk)}"
+                onclick="onScanSuccess(this.dataset.memberId)"
                 class="flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg bg-white hover:bg-emerald-50 border border-slate-200 hover:border-emerald-300 text-left transition"
               >
                 <div class="min-w-0">
                   <p class="text-xs font-bold text-slate-800 truncate">${escapeHtml(c.nama)}</p>
-                  <p class="font-mono text-[10px] text-emerald-700 font-bold">${c.member_id || formatKKMasked(c.no_kk)}</p>
+                  <p class="font-mono text-[10px] text-emerald-700 font-bold">${escapeHtml(c.member_id || formatKKMasked(c.no_kk))}</p>
                 </div>
                 <i data-lucide="arrow-up-right" class="w-3.5 h-3.5 text-emerald-600 shrink-0"></i>
               </button>
@@ -13294,6 +13297,11 @@ const INDONESIA_REGIONS = {
       applyRoleBasedUIPrivileges(session.role);
       renderHeaderAuthBadge();
       if (typeof syncSupabaseLoginGate === 'function') syncSupabaseLoginGate();
+      if (typeof CatatKuotaIDB !== 'undefined' && CatatKuotaIDB._ready && CatatKuotaIDB.reloadFromIdbIntoMemory) {
+        await CatatKuotaIDB.reloadFromIdbIntoMemory().catch(() => loadState());
+      } else {
+        loadState();
+      }
       refreshAllUI();
 
       if (!serverRole) {
@@ -13427,6 +13435,7 @@ const INDONESIA_REGIONS = {
       clearAuthSession();
       state.operatorName = '';
       state.isAdminUnlocked = false;
+      if (typeof clearSensitiveMemoryState === 'function') clearSensitiveMemoryState();
       applyRoleBasedUIPrivileges(null);
       renderHeaderAuthBadge();
       if (showNotification) {
@@ -16314,11 +16323,22 @@ const INDONESIA_REGIONS = {
       // 3. Status cloud awal harus offline/lokal sampai sinkronisasi terkonfirmasi
       try {
         updateCloudStatusUI('offline', 'Belum tersinkron. Menunggu koneksi cloud.');
+        const simBox = document.getElementById('sim-date-control-box');
+        const isCloud = typeof isCloudModeActive === 'function' && isCloudModeActive();
+        if (isCloud) {
+          state.simDate = BASE_TODAY_DATE;
+          if (simBox) simBox.classList.add('hidden');
+        } else if (simBox) {
+          simBox.classList.remove('hidden');
+        }
         const simInput = document.getElementById('sim-date-input');
         if (simInput && state.simDate) simInput.value = state.simDate;
         const txDateInput = document.getElementById('record-tx-date');
-        if (txDateInput && !txDateInput.value) {
-          txDateInput.value = BASE_TODAY_DATE;
+        if (txDateInput) {
+          txDateInput.max = todayLocalISO();
+          if (!txDateInput.value) {
+            txDateInput.value = BASE_TODAY_DATE;
+          }
         }
       } catch (errInit) {
         console.warn('Peringatan inisialisasi form/status:', errInit);
