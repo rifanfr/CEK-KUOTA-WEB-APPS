@@ -9938,6 +9938,93 @@ const INDONESIA_REGIONS = {
     }
 
     // CSV untuk Excel Indonesia: delimiter titik-koma, nomor KK dipaksa teks
+    // agar tidak berubah jadi notasi eksponensial (3.2E+15), BOM UTF-8, anti formula-injection.
+    function buildCSV(headers, rows) {
+      const esc = (v) => {
+        let s = String(v ?? '').trim();
+        const needsText = /^\d{10,}$/.test(s) || /^0\d+$/.test(s);
+        if (needsText) {
+          return `"=""${s}"""`;
+        }
+        if (/^[=+\-@\t\r]/.test(s)) {
+          s = `'${s}`;
+        }
+        return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const line = (arr) => arr.map(esc).join(';');
+      return '\uFEFF' + [line(headers), ...rows.map(line)].join('\r\n');
+    }
+
+    function downloadFilteredCSV() {
+      const data = getFilteredExportData();
+      if (!data || data.length === 0) {
+        showToast('Tidak ada data pada periode tanggal yang dipilih.', 'error');
+        return;
+      }
+
+      let filename = '';
+      let csvContent = '';
+
+      if (exportState.dataType === 'logs') {
+        filename = `riwayat-kuota-kk-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
+        const cycleDays = Number(state.settings.cycleDays) || 30;
+        const headers = ['No', 'ID_Log', 'Tanggal_Transaksi', 'Jam', 'No_KK', 'Kepala_Keluarga', 'Qty_Beras', 'Qty_Gas_LPG', 'Total_Pcs', 'Kuota_Baru_Jatuh_Tempo', 'Petugas'];
+        const rows = data.map((l, idx) => [
+          idx + 1,
+          l.id,
+          l.date,
+          l.time,
+          String(l.no_kk || '').replace(/\D/g, ''),
+          l.nama || '',
+          l.qty_beras,
+          l.qty_gas,
+          l.total_pcs,
+          addDaysISO(l.date, cycleDays),
+          formatOperatorRoleEmailText(l),
+        ]);
+        csvContent = buildCSV(headers, rows);
+      } else {
+        filename = `mutasi-stok-gudang-${exportState.startDate || 'awal'}-sd-${exportState.endDate || 'akhir'}.csv`;
+        const headers = ['No', 'ID_Mutasi', 'Tanggal', 'Tipe', 'Komoditas', 'Qty', 'No_DO_Keterangan', 'Petugas'];
+        const rows = data.map((w, idx) => [
+          idx + 1,
+          w.id,
+          w.date,
+          w.type,
+          w.item.toUpperCase(),
+          w.qty,
+          w.ref || '',
+          formatOperatorRoleEmailText(w),
+        ]);
+        csvContent = buildCSV(headers, rows);
+      }
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast('Berkas CSV mentah berhasil diunduh.', 'success');
+      closeExportModal();
+    }
+
+    function setExportFormat(format) {
+      exportState.format = format || 'excel';
+
+      const btnExcel = document.getElementById('btn-format-excel');
+      const btnCsv = document.getElementById('btn-format-csv');
+      const btnPdf = document.getElementById('btn-format-pdf');
+      const actionBtn = document.getElementById('btn-export-action-execute');
+
+      const baseClass = 'p-2.5 rounded-xl border text-center transition flex flex-col items-center justify-center gap-1 cursor-pointer';
+
+      if (btnExcel) {
+        if (exportState.format === 'excel') {
           btnExcel.className = `${baseClass} bg-emerald-50 border-emerald-500 text-emerald-900 shadow-2xs ring-2 ring-emerald-500/30`;
         } else {
           btnExcel.className = `${baseClass} bg-white border-slate-300 text-slate-700 hover:bg-slate-50`;
@@ -14196,21 +14283,46 @@ const INDONESIA_REGIONS = {
           settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span><span>${countText}</span>`;
         }
       } else {
-        // Mode Lokal (Offline)
-        if (badgeHeader) {
-          badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 shadow-2xs shrink-0 cursor-pointer';
-          badgeHeader.title = message || 'Mode Offline / Lokal. Data tersimpan di browser perangkat ini.';
-          badgeHeader.innerHTML = `
-            <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
-              <line x1="2" y1="2" x2="22" y2="22" stroke="#94a3b8" stroke-width="2"/>
-            </svg>
-            <span id="cloud-badge-text" class="hidden sm:inline">Mode Lokal</span>
-          `;
-        }
-        if (settingsBadge) {
-          settingsBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 flex items-center gap-1.5 shrink-0';
-          settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-slate-400"></span><span>Mode Lokal (Offline)</span>`;
+        const isCloud = typeof isCloudModeActive === 'function' && isCloudModeActive();
+        const hasSession = Boolean(typeof getAuthSession === 'function' && getAuthSession()?.access_token);
+        if (isCloud) {
+          const headerText = hasSession ? 'Cloud (Offline)' : 'Cloud (Login)';
+          const settingsText = hasSession ? 'Cloud Terputus (Mode Offline)' : 'Cloud Aktif (Login Diperlukan)';
+          const defaultTitle = hasSession
+            ? 'Konfigurasi Cloud aktif, namun koneksi server sedang terputus.'
+            : 'Konfigurasi Cloud aktif. Silakan login petugas untuk sinkronisasi.';
+          if (badgeHeader) {
+            badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-amber-50 text-amber-800 border border-amber-300 hover:bg-amber-100 shadow-2xs shrink-0 cursor-pointer';
+            badgeHeader.title = message || defaultTitle;
+            badgeHeader.innerHTML = `
+              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#fef3c7" stroke="#d97706" stroke-width="1.8"/>
+                <circle cx="12" cy="13" r="1.2" fill="#d97706"/>
+              </svg>
+              <span id="cloud-badge-text" class="hidden sm:inline">${headerText}</span>
+            `;
+          }
+          if (settingsBadge) {
+            settingsBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300 flex items-center gap-1.5 shrink-0';
+            settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-500"></span><span>${settingsText}</span>`;
+          }
+        } else {
+          // Mode Lokal (Offline)
+          if (badgeHeader) {
+            badgeHeader.className = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition bg-slate-100 text-slate-700 border border-slate-300 hover:bg-slate-200 shadow-2xs shrink-0 cursor-pointer';
+            badgeHeader.title = message || 'Mode Offline / Lokal. Data tersimpan di browser perangkat ini.';
+            badgeHeader.innerHTML = `
+              <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.8"/>
+                <line x1="2" y1="2" x2="22" y2="22" stroke="#94a3b8" stroke-width="2"/>
+              </svg>
+              <span id="cloud-badge-text" class="hidden sm:inline">Mode Lokal</span>
+            `;
+          }
+          if (settingsBadge) {
+            settingsBadge.className = 'px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300 flex items-center gap-1.5 shrink-0';
+            settingsBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-slate-400"></span><span>Mode Lokal (Offline)</span>`;
+          }
         }
       }
 
